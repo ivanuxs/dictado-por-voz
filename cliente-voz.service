@@ -1,0 +1,21 @@
+[Unit]
+Description=Cliente de Dictado por Voz — captura audio, inyecta texto, ejecuta comandos
+After=default.target sound.target network.target
+Wants=default.target sound.target network.target
+
+[Service]
+Type=simple
+# %h se expande al directorio home del usuario que ejecuta el servicio.
+# Antes de instalarlo, ajusta la carpeta del proyecto y la IP del servidor.
+ExecStart=/usr/bin/bash -c "exec \"%h/Documentos/dictado por voz/entorno_dictado/bin/python3\" \"%h/Documentos/dictado por voz/cliente_voz.py\" --servidor 127.0.0.1:5555"
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+Environment=PULSE_RUNTIME_PATH=/run/user/1000/pulse
+# Clave de DeepSeek y dirección del servidor, fuera del repositorio.
+# Crear el archivo con:  cp .env.example ~/.config/cliente-voz.env
+EnvironmentFile=-%h/.config/cliente-voz.env
+
+[Install]
+WantedBy=default.target

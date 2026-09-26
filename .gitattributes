@@ -1,0 +1,23 @@
+# Normalización de finales de línea
+* text=auto eol=lf
+
+# Scripts de Windows: deben conservar CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Archivos binarios
+*.exe binary
+*.dll binary
+*.so binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.tar.gz binary
+
+# Marcar textos como no generados
+*.md text
+*.py text
+*.json text

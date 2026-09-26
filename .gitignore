@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────
+# Entornos virtuales (nunca versionar: son específicos de cada PC)
+# ─────────────────────────────────────────────────────────────
+entorno_dictado/
+entorno_web/
+.venv/
+venv/
+env/
+ENV/
+
+# ─────────────────────────────────────────────────────────────
+# Modelos de voz (pesan más de 2 GB; se descargan aparte)
+# Ver README.md → "Descarga del modelo Vosk"
+# ─────────────────────────────────────────────────────────────
+vosk-model-es/
+vosk-model-es-*/
+vosk-model-small-es-*/
+vosk-model-*/
+*.model
+
+# ─────────────────────────────────────────────────────────────
+# Logs y archivos temporales de la aplicación
+# ─────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ─────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ─────────────────────────────────────────────────────────────
+# Secretos y configuración local (NUNCA subir claves)
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+cliente-voz.env
+
+# ─────────────────────────────────────────────────────────────
+# Resguardos personales (código retirado, no forma parte del producto)
+# ─────────────────────────────────────────────────────────────
+resguardos/
+
+# ─────────────────────────────────────────────────────────────
+# Carpetas y archivos de herramientas de editor / asistentes
+# ─────────────────────────────────────────────────────────────
+.qwen/
+.vscode/
+.idea/
+*.swp
+*~
+
+# ─────────────────────────────────────────────────────────────
+# Compilación del cliente para Windows (PyInstaller)
+# Se conserva cliente_voz.spec, pero no los artefactos generados.
+# ─────────────────────────────────────────────────────────────
+cliente_windows/build/
+cliente_windows/dist/
+cliente_windows/entorno_dictado_win/
+
+# ─────────────────────────────────────────────────────────────
+# Sistema operativo
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

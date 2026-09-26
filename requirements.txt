@@ -1,0 +1,16 @@
+# Dependencias del cliente de dictado por voz (Linux).
+# Instalar con:  pip install -r requirements.txt
+#
+# Requisitos del sistema (fuera de pip):
+#   - ffmpeg (provee ffplay, usado para reproducir el TTS)
+#       Ubuntu/Debian:  sudo apt install ffmpeg
+#   - Audio: PulseAudio o PipeWire en funcionamiento
+
+pyzmq
+numpy
+sounddevice
+pynput
+pyautogui
+pyperclip
+edge-tts
+requests

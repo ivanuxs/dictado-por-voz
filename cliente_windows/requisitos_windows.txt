@@ -1,0 +1,17 @@
+# Dependencias del cliente de dictado por voz para Windows.
+# Se instalan con: pip install -r requisitos_windows.txt
+
+pyzmq
+numpy
+sounddevice
+pynput
+pyautogui
+pyperclip
+edge-tts
+requests
+pycaw
+comtypes
+pygame
+
+# Herramienta para generar el producto final (ClienteVoz.exe)
+pyinstaller
