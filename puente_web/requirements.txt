@@ -1,0 +1,7 @@
+# Dependencias del puente web (se instalan en entorno_web/)
+fastapi
+uvicorn
+websockets
+python-multipart
+pyzmq
+numpy

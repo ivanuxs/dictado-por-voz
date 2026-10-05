@@ -1,0 +1,23 @@
+[Unit]
+Description=Puente HTTPS/WSS hacia el servidor de dictado (teclado Android)
+After=default.target network-online.target
+Wants=default.target network-online.target
+
+[Service]
+Type=simple
+# El puente no habla con Whisper: reenvía el audio al servidor de dictado
+# (tcp://127.0.0.1:5555), que corre como servicio de sistema en este equipo.
+# Es una unidad DE USUARIO: se instala y se reinicia sin sudo.
+# Ojo con las comillas: la ruta del proyecto lleva espacios.
+ExecStart=/usr/bin/bash -c "exec \"%h/Nextcloud/Proyectos/dictado por voz/entorno_web/bin/python\" \"%h/Nextcloud/Proyectos/dictado por voz/puente_web/servidor_web.py\""
+Restart=on-failure
+RestartSec=5
+# Token de acceso del puente (Authorization: Bearer) y, si algún día se
+# configura, el token del servidor de dictado.
+#   cp puente_web/.env.example ~/.config/puente-web.env
+EnvironmentFile=-%h/.config/puente-web.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
