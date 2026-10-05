@@ -47,6 +47,17 @@ dist/
 *.pem
 *.key
 cliente-voz.env
+puente-web.env
+
+# ─────────────────────────────────────────────────────────────
+# Compilación del cliente Android
+# ─────────────────────────────────────────────────────────────
+cliente_android/.gradle/
+cliente_android/build/
+cliente_android/app/build/
+cliente_android/local.properties
+*.apk
+*.aab
 
 # ─────────────────────────────────────────────────────────────
 # Resguardos personales (código retirado, no forma parte del producto)

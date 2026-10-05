@@ -18,11 +18,12 @@ Herramienta de dictado por voz para Linux (con cliente para Windows) que **trans
 7. [Uso](#uso)
 8. [Comandos de voz](#comandos-de-voz)
 9. [Cliente para Windows](#cliente-para-windows)
-10. [Servidor de transcripción](#servidor-de-transcripción)
-11. [Estructura del proyecto](#estructura-del-proyecto)
-12. [Solución de problemas](#solución-de-problemas)
-13. [Privacidad](#privacidad)
-14. [Licencia](#licencia)
+10. [Cliente Android y puente web](#cliente-android-y-puente-web)
+11. [Servidor de transcripción](#servidor-de-transcripción)
+12. [Estructura del proyecto](#estructura-del-proyecto)
+13. [Solución de problemas](#solución-de-problemas)
+14. [Privacidad](#privacidad)
+15. [Licencia](#licencia)
 
 ---
 
@@ -35,7 +36,8 @@ Herramienta de dictado por voz para Linux (con cliente para Windows) que **trans
 - **Dos modos de activación**: *toggle* (un clic para empezar, otro para detener) o *mantener* (mantenés la tecla mientras hablas).
 - **Indicador visual**: una ventana flotante muestra cuando se está grabando.
 - **Modo escucha continua**: el servidor puede activar la grabación al detectar la palabra clave.
-- **Servicios `systemd` de usuario** para que todo arranque solo al iniciar sesión.
+- **Dictado desde el celular**: teclado propio para Android que dicta contra el mismo servidor, incluso con datos móviles (ver [Cliente Android y puente web](#cliente-android-y-puente-web)).
+- **Servicios `systemd` de usuario** para que todo arranque solo al iniciar sesión (el cliente de escritorio y el puente web).
 
 ---
 
@@ -87,8 +89,16 @@ sudo apt install python3-venv ffmpeg
 
 ### Servidor (Linux)
 
-- Python 3.10 o superior, `ffmpeg` y los paquetes de `servidor/requirements.txt`
-  (incluye `openai-whisper`, `torch` y `vosk`).
+- El servidor vive en **su propio repositorio** (`servidor_dictado/`): es un servicio de
+  **sistema** con `faster-whisper` (`large-v3` en GPU), Vosk y `pyzmq`.
+- Este repositorio no lo modifica: solo se comunica con él por ZMQ (`5555`).
+
+### Cliente Android (opcional)
+
+- Un celular con **Android 8.0 o superior** y el APK compilado con
+  `bash cliente_android/construir_apk.sh` (requiere JDK 17 y el SDK de Android, que
+  `cliente_android/herramientas/instalar_sdk.sh` instala sin sudo).
+- El puente `puente_web/` publicado por HTTPS (ver [`puente_web/README.md`](puente_web/README.md)).
 
 ---
 
@@ -280,18 +290,41 @@ Las diferencias con la versión de Linux están detalladas en [`cliente_windows/
 
 ---
 
+## Cliente Android y puente web
+
+Además del cliente de escritorio, puedes **dictar desde el celular** con un **teclado
+(IME) propio**, incluso con datos móviles, sin tocar el servidor de transcripción.
+
+```
+Android (IME) ──HTTPS/WSS──▶ reverse proxy (nginx, TLS) ──▶ puente ──ZMQ──▶ servidor de dictado
+```
+
+- **`puente_web/`** — Servicio en Python (FastAPI) que **es un cliente ZMQ más** del
+  servidor: recibe audio por HTTPS o WebSocket y devuelve el texto ya corregido por el
+  servidor. No carga ningún modelo propio (el servidor tiene un solo modelo en memoria).
+  - Rutas: `POST /api/v1/transcribe` (audio completo), `WS /ws/transcribe` (dictado en
+    vivo, con texto parcial) y `GET /api/v1/salud|estado`.
+  - Se ejecuta como **servicio de usuario**:
+    `systemctl --user enable --now puente-web`.
+  - Exige token (`Authorization: Bearer`) y limita el audio (60 s, 5 MB) para proteger la GPU.
+  - Instalación y configuración de nginx: [`puente_web/README.md`](puente_web/README.md).
+- **`cliente_android/`** — Teclado del sistema en Kotlin (< 800 líneas), `minSdk 26`:
+  captura audio a 16 kHz, lo manda al puente y escribe el texto donde estés escribiendo.
+  - Compilar: `bash cliente_android/construir_apk.sh`.
+  - Uso y activación: [`cliente_android/README_android.md`](cliente_android/README_android.md).
+
+> ⚠️ **No publiques el puerto `5555` en el reverse proxy.** La autenticación del servidor
+> ZMQ es global, no por cliente: la frontera de seguridad es el puente.
+
+---
+
 ## Servidor de transcripción
 
-El servidor (`servidor_voz.py`) vive en su propia carpeta y se copia a la computadora de procesamiento. Sus archivos son:
-
-| Archivo | Para qué sirve |
-|---|---|
-| `servidor_voz.py` | Servidor ZMQ: carga Vosk y Whisper |
-| `escucha_continua.py` | Detección de palabras clave con Vosk |
-| `servidor-voz.service` | Servicio `systemd` del servidor |
-| `protocolo.py` | Tipos de mensaje (compartido con el cliente) |
-| `utils_logging.py` | Utilidades de registro (compartido con el cliente) |
-| `requirements.txt` | Dependencias del servidor |
+El servidor de transcripción **ya no vive en este repositorio**: está en su propio
+repositorio y carpeta (`servidor_dictado/`, `github.com/ivanuxs/servidor-voz`), donde se
+instala como **servicio de sistema** y usa `faster-whisper` `large-v3` en la GPU. Este
+repositorio solo se comunica con él: el cliente de escritorio por ZMQ y el puente web por
+ZMQ local.
 
 > `protocolo.py` y `utils_logging.py` deben ser **idénticos** en el cliente y en el servidor. Si actualizas uno, copia el cambio al otro.
 
@@ -313,6 +346,9 @@ dictado-por-voz/
 ├── .env.example                # Plantilla de variables de entorno
 ├── AGENTS.md                   # Notas de desarrollo del proyecto
 ├── cliente_windows/            # Cliente y empaquetado para Windows
+├── puente_web/                 # Puente HTTPS/WSS hacia el servidor (para Android)
+├── cliente_android/            # Teclado (IME) de Android en Kotlin
+├── entorno_web/                # Entorno virtual del puente (excluido de Git)
 ├── scratch/                    # Scripts de diagnóstico
 ├── logs/                       # Registros (excluidos de Git)
 └── vosk-model-es/              # Modelo de voz (excluido de Git)
@@ -335,9 +371,10 @@ dictado-por-voz/
 
 ## Privacidad
 
-- El **audio viaja por la red local** hacia el servidor y **no sale a internet**.
+- Con el **cliente de escritorio**, el audio viaja por la red local hacia el servidor y **no sale a internet**.
+- Con el **teclado de Android desde fuera de casa**, el audio sale por datos móviles pero va **cifrado (HTTPS/WSS)** hasta tu propio servidor: no pasa por ningún servicio de terceros. Dentro de casa puede quedarse en la red local.
 - Las consultas a **DeepSeek sí salen a internet**, pero solo si defines `DEEPSEEK_API_KEY`. Si no la defines, esa función queda desactivada.
-- Ninguna clave se guarda en el repositorio: `.env` y `cliente-voz.env` están excluidos por `.gitignore`.
+- Ninguna clave se guarda en el repositorio: `.env`, `cliente-voz.env` y `puente-web.env` están excluidos por `.gitignore`. En el celular, la URL, el token y la clave se guardan cifrados.
 - El modelo de voz se ejecuta localmente, así que el dictado funciona **sin conexión a internet**.
 
 ---

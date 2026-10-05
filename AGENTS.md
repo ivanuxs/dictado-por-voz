@@ -19,6 +19,9 @@
 
 ## Descripción del proyecto
 Herramienta de dictado por voz para Ubuntu que transcribe audio a texto y ejecuta comandos del sistema mediante voz.
+Desde 2026-10 hay además un **puente web** (`puente_web/`) y un **teclado para Android**
+(`cliente_android/`) que permiten dictar desde el celular, incluso con datos móviles, sin
+tocar el servidor de transcripción.
 
 ## Estructura del proyecto
 
@@ -45,15 +48,17 @@ dictado por voz/                    ← Carpeta del CLIENTE (PC usuario)
 ├── scratch/
 │   └── detectar_tecla.py           # Diagnóstico de teclas
 ├── resguardos/                     # Archivos retirados (dictado.py, dictado-voz.service)
-└── servidor/                       # Carpeta para COPIAR a la PC de procesamiento
-    ├── servidor_voz.py             # Servidor ZMQ: Vosk + Whisper
-    ├── servidor-voz.service        # Servicio systemd para el servidor
-    ├── escucha_continua.py         # Detección Vosk (recibe audio vía alimentar())
-    ├── protocolo.py                # (copia del compartido)
-    ├── utils_logging.py            # (copia del compartido)
-    ├── requirements.txt            # Dependencias Python del servidor
-    └── README.md                   # Instrucciones de instalación en el servidor
+├── entorno_web/                    # Entorno virtual del puente web (excluido de Git)
+├── cliente_windows/                # Cliente para Windows (carpeta para copiar a esa PC)
+├── puente_web/                     # Puente HTTPS/WSS → servidor de dictado (ver su README)
+└── cliente_android/                # Teclado (IME) de Android en Kotlin (ver su README)
 ```
+
+> **El servidor de transcripción ya no vive en este repositorio.** Está en su propio
+> repositorio y carpeta: `/home/ivan/Documentos/servidor_dictado`
+> (`github.com/ivanuxs/servidor-voz`), donde es un **servicio de sistema** que usa
+> faster-whisper `large-v3` en la GPU. Este repositorio **no lo modifica**: solo se
+> comunica con él (el cliente de Linux/Windows por ZMQ y el puente web por ZMQ local).
 
 ## Características principales
 
@@ -82,6 +87,70 @@ CLIENTE (PC usuario)                    SERVIDOR (PC procesamiento)
 - **Mensajes**: multipart 2 frames `[tipo, payload]`
 - **Audio**: chunks int16 1024 muestras (~64 ms) a 16 kHz, enviados continuamente
 - **Puerto**: TCP 5555 (configurable con `--servidor IP:PUERTO`)
+
+### Puente web para Android (`puente_web/`)
+
+Android **no habla ZMQ** y el servidor tiene **un solo modelo en memoria**, así que no se
+puede poner un backend que cargue Whisper por su cuenta (no cabe en 6 GB de VRAM). La
+solución es un puente que **es un cliente ZMQ más** del servidor (no lo toca) y expone
+HTTP/WebSocket:
+
+```
+Android (IME) ──HTTPS/WSS──▶ nginx (192.168.1.100) ──▶ puente (192.168.1.2:8000) ──ZMQ──▶ 127.0.0.1:5555
+```
+
+- Es un **servicio de usuario** (`systemctl --user`, sin sudo) en `puente_web/`, con su
+  propio entorno virtual `entorno_web/`.
+- Rutas: `POST /api/v1/transcribe`, `WS /ws/transcribe`, `GET /api/v1/salud` y
+  `/api/v1/estado`. Detalle completo en `puente_web/README.md`.
+- Token obligatorio (`DICTADO_WEB_TOKEN` en `~/.config/puente-web.env`); arranca con 64
+  caracteres aleatorios. Sin token el puente **no arranca**.
+- La transcripción es **de una en una** (un modelo, un candado). Los límites (60 s, 5 MB,
+  cola de 2) protegen la GPU de un abuso con el token.
+
+⚠️ **Trampas del protocolo que ya están resueltas en el puente; no las deshagas:**
+
+1. Si un dictado se corta sin `DICTADO_STOP`, el servidor se queda en "dictando" e **ignora
+   el siguiente `DICTADO_START`**. El puente cierra siempre la sesión y **descarta la
+   respuesta** de ese cierre (si no, el próximo dictado leería el texto del anterior).
+   Probado con `prueba_puente.py --cancelar`.
+2. **Nunca reenviar el puerto 5555 en nginx.** En el servidor, el flag `_autenticado` es
+   **global**, no por cliente: en cuanto un cliente se autentica, cualquier otro cliente
+   ZMQ queda aceptado. La frontera de seguridad es el puente (Bearer + la clave que valida
+   nginx), nunca el token del ZMQ.
+3. El puente mantiene **una sola conexión persistente**: el servidor crea un reconocedor
+   Vosk por cada cliente que se conecta.
+
+### Cliente Android (`cliente_android/`)
+
+Teclado del sistema (IME) en Kotlin, `minSdk 26`, sin frameworks pesados: captura audio,
+lo manda al puente y escribe el texto. **No hay lógica de transcripción aquí.**
+
+- Compilar: `bash cliente_android/construir_apk.sh` (APK en `app/build/outputs/apk/debug/`).
+- Las herramientas se instalan sin sudo con `cliente_android/herramientas/instalar_sdk.sh`
+  (JDK 17 + SDK 34 + Gradle 8.7 en `~/Android`).
+- **Java 25 no sirve para el plugin de Android**: hay que usar el JDK 17.
+- Las credenciales (dirección, token y clave) van **dentro del APK**, leídas de
+  `cliente_android/local.properties` (no versionado) como `BuildConfig`. La app no
+  obliga a escribir nada en el celular. También acepta configurarse por enlace:
+  `dictadoime://config?url=...&token=...&clave=...`.
+- El teclado tiene **dos modos**: dictado (micrófono grande) y **edición** (teclado de letras
+  propio, `TecladoLetras.kt`, construido en código: página de letras y de símbolos, ⇧/⇪ y ⌫
+  con repetición). El botón ⌨ cambia de modo, así **no hace falta salir a Gboard**; mantener
+  pulsado ⌨ (o `?123`) abre el selector del sistema para quien quiera Gboard igualmente.
+- Arranque y uso: `cliente_android/README_android.md`.
+
+⚠️ **Trampas ya pagadas:**
+
+1. El `android.jar` de `platforms/android-34` instalado aquí **no expone
+   `switchToPreviousInputMethod()`** (solo las variantes con `IBinder`, que son API interna).
+   El botón de teclado usa `switchToLastInputMethod(token)` para volver al teclado anterior,
+   con respaldo al público `showInputMethodPicker()` si el sistema lo bloquea (el selector
+   queda en el pulsado largo).
+2. El **permiso de micrófono** lo pide `AjustesActivity`: un `InputMethodService` no puede
+   mostrar el diálogo de permisos.
+3. `python3 -m zipfile -e` **no conserva el bit de ejecución** (a diferencia de `unzip`): el
+   instalador del SDK tiene que hacer `chmod +x` de los binarios que descomprime.
 
 ### Dictado por voz
 - La transcripción se hace en el servidor (Vosk para detección de keywords, Whisper para transcripción).
@@ -166,9 +235,19 @@ journalctl --user -u cliente-voz -f   # Ver logs del servicio
 tail -f "dictado por voz/logs/registro_cliente_voz.log"
 ```
 
-## Rotación de logs
-Al iniciar, `cliente_voz.py` llama a `rotar_logs_al_iniciar()` que mueve los logs anteriores a `logs/historial/` con marca de tiempo y empieza un archivo limpio. Esto evita que los logs crezcan indefinidamente.
+### Puente web (servicio de usuario, sin sudo)
+```bash
+systemctl --user status puente-web    # Ver estado
+systemctl --user restart puente-web   # Reiniciar (tras cambiar el .env)
+journalctl --user -u puente-web -f    # Consola (avisos de uvicorn)
+tail -f "dictado por voz/puente_web/logs/registro_servidor_web.log"
 
+# Comprobaciones con audio real
+set -a; . ~/.config/puente-web.env; set +a
+entorno_web/bin/python puente_web/prueba_puente.py                 # REST
+entorno_web/bin/python puente_web/prueba_puente.py --ws --modo vivo # WebSocket
+entorno_web/bin/python puente_web/prueba_puente.py --cancelar       # robustez
+```
 ## Extensibilidad
 Para añadir nuevos comandos de voz:
 1. Editar `comandos.json` añadiendo entradas en `abrir` o `cerrar`.
@@ -178,8 +257,9 @@ Para añadir nuevos comandos de voz:
 - El repositorio es **público**: no subir nunca claves, tokens ni datos personales.
 - `DEEPSEEK_API_KEY` vive en `~/.config/cliente-voz.env` (fuera del repositorio), cargado con
   `EnvironmentFile=` desde `cliente-voz.service`. Está excluido por `.gitignore`.
-- Excluidos por `.gitignore`: `entorno_dictado/`, `vosk-model-es/`, `logs/`, `resguardos/`,
-  `.qwen/`, `.env` y los artefactos de compilación de PyInstaller.
+- Excluidos por `.gitignore`: `entorno_dictado/`, `entorno_web/`, `vosk-model-es/`, `logs/`, `resguardos/`,
+  `.qwen/`, `.env`, `cliente-voz.env`, `puente-web.env` y los artefactos de compilación de
+  PyInstaller **y de Android** (`cliente_android/.gradle|build|local.properties`, `*.apk`).
 - La dirección del servidor se resuelve en este orden: `--servidor IP:PUERTO` >
   `DICTADO_SERVIDOR` (variable de entorno) > campo `"servidor"` de `comandos.json` >
   `127.0.0.1:5555`.
