@@ -9,6 +9,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -228,6 +229,70 @@ def cargar_modo_activacion():
         modo = "mantener"
     imprimir(f"Modo de activación: {modo}")
     return modo
+
+
+def _obtener_ruta_pid():
+    directorio = os.environ.get("XDG_RUNTIME_DIR")
+    if not directorio or not os.path.isdir(directorio):
+        directorio = os.path.expanduser("~/.cache")
+        os.makedirs(directorio, exist_ok=True)
+    return os.path.join(directorio, "cliente_voz.pid")
+
+
+def _enviar_toggle_cli(modo="normal"):
+    """Envía la señal de toggle a la instancia de cliente_voz en ejecución."""
+    sig_nombre = "SIGUSR1" if modo == "normal" else "SIGUSR2"
+    sig_num = getattr(signal, sig_nombre, None)
+    if sig_num is None:
+        return False
+
+    # 1. Intentar primero con systemctl si el servicio de usuario está activo
+    try:
+        res = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "cliente-voz"],
+            capture_output=True,
+        )
+        if res.returncode == 0:
+            subprocess.run(
+                ["systemctl", "--user", "kill", "-s", sig_nombre, "cliente-voz"],
+                check=True,
+            )
+            return True
+    except Exception:
+        pass
+
+    # 2. Intentar leyendo el archivo PID
+    ruta_pid = _obtener_ruta_pid()
+    if os.path.exists(ruta_pid):
+        try:
+            with open(ruta_pid, "r") as f:
+                pid = int(f.read().strip())
+            os.kill(pid, sig_num)
+            return True
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+
+    # 3. Fallback: buscar con pgrep
+    try:
+        res = subprocess.run(
+            ["pgrep", "-f", "python3.*cliente_voz.py"],
+            capture_output=True,
+            text=True,
+        )
+        pids = [int(p) for p in res.stdout.strip().split() if p and int(p) != os.getpid()]
+        if pids:
+            for pid in pids:
+                try:
+                    os.kill(pid, sig_num)
+                except Exception:
+                    pass
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +753,54 @@ class ClienteVoz:
 
     # --- Callbacks de teclado ---
 
+    def _manejador_sigusr1(self, signum, frame):
+        self._cola_eventos.put("toggle_normal")
+
+    def _manejador_sigusr2(self, signum, frame):
+        self._cola_eventos.put("toggle_escribir")
+
+    def _alternar_grabacion(self, modo="normal"):
+        """Inicia o detiene la grabación en modo toggle."""
+        if self._inyectando:
+            return
+
+        if not self._grabando:
+            self._grabando = True
+            self._tecla_suelta = False
+            self._escribir_este_dictado = (
+                modo == "escribir" or self._modo_salida == "escribir"
+            )
+            imprimir(f"\n[GRABANDO... ({modo}) Pulsa de nuevo para detener]")
+            try:
+                _mostrar_indicador()
+            except Exception as e:
+                imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+            self._cola_eventos.put("start")
+        else:
+            self._grabando = False
+            self._tecla_suelta = False
+            try:
+                _ocultar_indicador()
+            except Exception as e:
+                imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
+            imprimir("[DETENIDO. Procesando...]")
+            self._cola_eventos.put("stop")
+
+    def _guardar_pid(self):
+        try:
+            with open(_obtener_ruta_pid(), "w") as f:
+                f.write(str(os.getpid()))
+        except Exception:
+            pass
+
+    def _limpiar_pid(self):
+        try:
+            ruta_pid = _obtener_ruta_pid()
+            if os.path.exists(ruta_pid):
+                os.remove(ruta_pid)
+        except Exception:
+            pass
+
     def _coincide_combinacion(self, key, combinaciones):
         """True si `key` completa alguna combinación (el resto ya pulsadas)."""
         for combo in combinaciones:
@@ -755,24 +868,7 @@ class ClienteVoz:
         )
 
         if self._modo_activacion == "toggle":
-            if not self._grabando:
-                self._grabando = True
-                self._tecla_suelta = False
-                imprimir("\n[GRABANDO... Pulsa de nuevo para detener]")
-                try:
-                    _mostrar_indicador()
-                except Exception as e:
-                    imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
-                self._cola_eventos.put("start")
-            else:
-                self._grabando = False
-                self._tecla_suelta = False
-                try:
-                    _ocultar_indicador()
-                except Exception as e:
-                    imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
-                imprimir("[DETENIDO. Procesando...]")
-                self._cola_eventos.put("stop")
+            self._alternar_grabacion(modo)
         else:
             if not self._grabando:
                 self._grabando = True
@@ -881,13 +977,25 @@ class ClienteVoz:
         self._socket.connect(self._direccion)
         imprimir(f"[CLIENTE] Conectado a {self._direccion}")
 
+        # Guardar PID para control externo (señales / CLI)
+        self._guardar_pid()
+
+        # Configurar señales POSIX para control externo (Wayland / GNOME shortcuts)
+        if hasattr(signal, "SIGUSR1"):
+            signal.signal(signal.SIGUSR1, self._manejador_sigusr1)
+        if hasattr(signal, "SIGUSR2"):
+            signal.signal(signal.SIGUSR2, self._manejador_sigusr2)
+
         # Iniciar escucha de teclado ANTES que el audio: si el micrófono
         # falla, la activación por teclado debe seguir funcionando.
-        listener = keyboard.Listener(
-            on_press=self._on_press, on_release=self._on_release
-        )
-        listener.start()
-        imprimir("[CLIENTE] Escucha de teclado iniciada.")
+        try:
+            listener = keyboard.Listener(
+                on_press=self._on_press, on_release=self._on_release
+            )
+            listener.start()
+            imprimir("[CLIENTE] Escucha de teclado iniciada.")
+        except Exception as e:
+            imprimir(f"[CLIENTE] No se pudo iniciar el listener de pynput: {e}")
 
         # Hebra que escribe en el cursor los textos dictados (en orden)
         threading.Thread(target=self._bucle_escritura, daemon=True).start()
@@ -1006,6 +1114,7 @@ class ClienteVoz:
             imprimir("[CLIENTE] Detenido por el usuario.")
         finally:
             self._activo = False
+            self._limpiar_pid()
             if stream is not None:
                 try:
                     stream.stop()
@@ -1039,7 +1148,11 @@ class ClienteVoz:
         while True:
             try:
                 evento = self._cola_eventos.get_nowait()
-                if evento == "start":
+                if evento == "toggle_normal":
+                    self._alternar_grabacion("normal")
+                elif evento == "toggle_escribir":
+                    self._alternar_grabacion("escribir")
+                elif evento == "start":
                     if self._escribir_este_dictado:
                         # Dictado en vivo: el servidor manda el texto por frases
                         imprimir("[CLIENTE] Enviando DICTADO_START en vivo al servidor...")
@@ -1233,10 +1346,19 @@ def _desinstalar_autostart():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    args = sys.argv[1:]
+
+    # Alternancia rápida por CLI (Wayland / GNOME shortcuts)
+    if "--toggle" in args or "--toggle-escribir" in args:
+        modo = "escribir" if "--toggle-escribir" in args else "normal"
+        if _enviar_toggle_cli(modo):
+            sys.exit(0)
+        else:
+            print("Error: cliente_voz no se está ejecutando.")
+            sys.exit(1)
+
     rotar_logs_al_iniciar()
     imprimir("=== CLIENTE DE DICTADO POR VOZ ===")
-
-    args = sys.argv[1:]
 
     # Modos de instalación del cliente dedicado (Windows)
     if "--instalar" in args:
