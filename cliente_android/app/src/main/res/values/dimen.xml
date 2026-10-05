@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Separación entre teclas. El ALTO se elige en los ajustes de la app
+         (tamaño del teclado) y se guarda en Ajustes.alturaTecla. -->
+    <dimen name="margen_tecla">2dp</dimen>
+</resources>

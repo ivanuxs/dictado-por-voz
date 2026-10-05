@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fondo_teclado">#FF1B1B1B</color>
+    <color name="fondo_boton">#FF2A2A2A</color>
+    <color name="texto_estado">#FFBDBDBD</color>
+    <color name="texto_error">#FFEF9A9A</color>
+    <color name="icono">#FFFFFFFF</color>
+    <color name="micro_listo">#FF2E7D32</color>
+    <color name="micro_grabando">#FFC62828</color>
+    <color name="micro_procesando">#FFEF6C00</color>
+    <color name="micro_error">#FF616161</color>
+</resources>

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Micrófono: captura del dictado. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Red: habla con el puente HTTPS/WSS. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Aviso háptico al empezar y terminar de grabar. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_icono"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/TemaDictado">
+
+        <!-- El teclado del sistema. BIND_INPUT_METHOD lo exige Android. -->
+        <service
+            android:name=".ServicioTecladoVoz"
+            android:exported="true"
+            android:label="@string/ime_name"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <!-- Pantalla de ajustes (y el lanzador: sirve para pedir el micrófono).
+             singleTop para que el enlace de configuración no abra otra copia. -->
+        <activity
+            android:name=".AjustesActivity"
+            android:exported="true"
+            android:label="@string/ajustes_titulo"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Configuración por enlace:
+                 dictadoime://config?url=...&token=...&clave=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dictadoime" android:host="config" />
+            </intent-filter>
+        </activity>
+
+        <!-- Teja de ajustes rápidos: vuelve al teclado de dictado desde cualquier
+             app. Hay que añadirla al panel (editar el panel y arrastrarla). -->
+        <service
+            android:name=".TejaRapidaDictado"
+            android:exported="true"
+            android:icon="@drawable/ic_micro"
+            android:label="@string/ajustes_volver"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

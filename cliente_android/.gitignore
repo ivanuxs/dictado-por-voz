@@ -1,0 +1,7 @@
+# Artefactos de compilación y archivos locales (no van al repositorio)
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+capturas/

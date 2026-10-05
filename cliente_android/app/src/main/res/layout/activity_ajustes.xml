@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pantalla de ajustes.
+
+  Los colores van explícitos a propósito: el tema es oscuro y no queremos que
+  el texto dependa del modo claro/oscuro del celular (fue el bug de "texto del
+  mismo color que el fondo").
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_ayuda"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="12sp" />
+
+        <TextView
+            style="@style/EtiquetaAjuste"
+            android:text="@string/ajustes_url" />
+
+        <EditText
+            android:id="@+id/campo_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/ajustes_url_ayuda"
+            android:importantForAutofill="no"
+            android:inputType="textUri"
+            android:textColor="?attr/colorOnSurface"
+            android:textColorHint="?attr/colorOnSurfaceVariant" />
+
+        <TextView
+            style="@style/EtiquetaAjuste"
+            android:text="@string/ajustes_token" />
+
+        <EditText
+            android:id="@+id/campo_token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="textVisiblePassword"
+            android:textColor="?attr/colorOnSurface"
+            android:textColorHint="?attr/colorOnSurfaceVariant" />
+
+        <TextView
+            style="@style/EtiquetaAjuste"
+            android:text="@string/ajustes_clave" />
+
+        <EditText
+            android:id="@+id/campo_clave"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/ajustes_clave_ayuda"
+            android:importantForAutofill="no"
+            android:inputType="textVisiblePassword"
+            android:textColor="?attr/colorOnSurface"
+            android:textColorHint="?attr/colorOnSurfaceVariant" />
+
+        <Switch
+            android:id="@+id/campo_vivo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/ajustes_vivo"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_vivo_ayuda"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="12sp" />
+
+        <TextView
+            style="@style/EtiquetaAjuste"
+            android:text="@string/ajustes_espera" />
+
+        <EditText
+            android:id="@+id/campo_espera"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:importantForAutofill="no"
+            android:inputType="number"
+            android:textColor="?attr/colorOnSurface"
+            android:textColorHint="?attr/colorOnSurfaceVariant" />
+
+        <TextView
+            style="@style/EtiquetaAjuste"
+            android:text="@string/ajustes_teclado" />
+
+        <Switch
+            android:id="@+id/campo_numeros"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_fila_numeros"
+            android:textColor="?attr/colorOnSurface" />
+
+        <Switch
+            android:id="@+id/campo_vibrar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_vibrar"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:id="@+id/etiqueta_tamano"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="14sp" />
+
+        <SeekBar
+            android:id="@+id/campo_tamano"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/boton_guardar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/ajustes_guardar" />
+
+        <Button
+            android:id="@+id/boton_probar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_probar" />
+
+        <Button
+            android:id="@+id/boton_abrir_teclados"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/ajustes_abrir_teclados" />
+
+        <Button
+            android:id="@+id/boton_elegir_teclado"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_elegir_teclado" />
+
+        <Button
+            android:id="@+id/boton_volver"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/ajustes_volver" />
+
+        <Button
+            android:id="@+id/boton_teja"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_teja" />
+
+        <TextView
+            android:id="@+id/texto_resultado"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="14sp" />
+    </LinearLayout>
+</ScrollView>

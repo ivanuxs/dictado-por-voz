@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dictado por voz</string>
+    <string name="ime_name">Dictado por voz</string>
+    <string name="idioma_es">Español (dictado)</string>
+    <string name="ajustes_titulo">Ajustes del dictado</string>
+
+    <!-- Estados del micrófono -->
+    <string name="estado_listo">Listo</string>
+    <string name="estado_grabando">Grabando… toca para terminar</string>
+    <string name="estado_procesando">Transcribiendo…</string>
+    <string name="estado_error">Error</string>
+    <string name="edicion_estado">Edición manual · toca 🎤 para volver al dictado</string>
+
+    <!-- Acciones del teclado -->
+    <string name="accion_micro">Grabar dictado</string>
+    <string name="accion_borrar">Borrar</string>
+    <string name="accion_enter">Enter</string>
+    <string name="accion_teclado">Cambiar de teclado</string>
+    <string name="aviso_volver">Para volver al dictado: toca la tecla de cambio de teclado del otro teclado (el globo) o el icono de teclado de la barra inferior.</string>
+
+    <!-- Avisos -->
+    <string name="falta_permiso_micro">Falta el permiso de micrófono: ábrelo en los ajustes de la app.</string>
+    <string name="falta_configurar">Configura la dirección del puente y el token en los ajustes de la app.</string>
+    <string name="error_micro">No se pudo abrir el micrófono.</string>
+    <string name="sin_audio">No se capturó audio.</string>
+
+    <!-- Pantalla de ajustes -->
+    <string name="ajustes_url">Dirección del puente</string>
+    <string name="ajustes_url_ayuda">Ejemplo: https://dictado.midominio.com</string>
+    <string name="ajustes_token">Token de acceso</string>
+    <string name="ajustes_clave">Clave del proxy (cabecera X-Clave-Cliente)</string>
+    <string name="ajustes_clave_ayuda">Si el proxy no la pide, déjala vacía.</string>
+    <string name="ajustes_vivo">Dictado en vivo (inserta el texto mientras hablo)</string>
+    <string name="ajustes_vivo_ayuda">Desactivado: se envía el audio al terminar de hablar, que es lo más robusto.</string>
+    <string name="ajustes_espera">Segundos de espera de respuesta</string>
+    <string name="ajustes_teclado">Teclado</string>
+    <string name="ajustes_fila_numeros">Fila de números arriba</string>
+    <string name="ajustes_vibrar">Vibrar al pulsar las teclas</string>
+    <string name="ajustes_tamano">Tamaño de las teclas: %1$d</string>
+    <string name="ajustes_guardar">Guardar</string>
+    <string name="ajustes_guardado">Ajustes guardados.</string>
+    <string name="ajustes_probar">Probar conexión</string>
+    <string name="ajustes_micro">Permiso de micrófono</string>
+    <string name="ajustes_abrir_teclados">Activar el teclado en Android</string>
+    <string name="ajustes_elegir_teclado">Elegir teclado</string>
+    <string name="ajustes_volver">Volver al teclado de dictado</string>
+    <string name="ajustes_teja">Añadir la teja al panel de ajustes rápidos</string>
+    <string name="ajustes_teja_listo">Listo. Baja el panel de ajustes rápidos (desliza desde arriba) y toca «Volver al teclado de dictado».</string>
+    <string name="ajustes_teja_manual">Este Android es anterior a Android 13: baja el panel de ajustes rápidos, toca el lápiz de editar y arrastra «Volver al teclado de dictado».</string>
+    <string name="ajustes_incompleto">Faltan la dirección o el token.</string>
+    <string name="ajustes_probando">Probando…</string>
+    <string name="ajustes_desde_enlace">Configuración aplicada desde el enlace.</string>
+    <string name="ajustes_ayuda">Estos datos pueden venir ya dentro de la app. Si los cambias, escribe la dirección con https:// y sin barra final.</string>
+</resources>

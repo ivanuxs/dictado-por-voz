@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Estructura del teclado: la línea de estado arriba y, debajo, el espacio donde
+  se pone el modo activo:
+    - modo dictado  -> vista_dictado.xml
+    - modo edición  -> teclado de letras propio (se construye en código)
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/fondo_teclado"
+    android:orientation="vertical"
+    android:padding="6dp">
+
+    <TextView
+        android:id="@+id/texto_estado"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:maxLines="2"
+        android:paddingBottom="4dp"
+        android:text="@string/estado_listo"
+        android:textColor="@color/texto_estado"
+        android:textSize="13sp" />
+
+    <FrameLayout
+        android:id="@+id/contenedor"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+</LinearLayout>

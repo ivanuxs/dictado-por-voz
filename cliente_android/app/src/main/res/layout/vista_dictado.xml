@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Modo dictado: el micrófono grande y las teclas imprescindibles. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <ImageButton
+        android:id="@+id/boton_teclado"
+        style="@style/BotonTeclado"
+        android:contentDescription="@string/accion_teclado"
+        android:src="@drawable/ic_teclado" />
+
+    <ImageButton
+        android:id="@+id/boton_micro"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:layout_margin="4dp"
+        android:layout_weight="1"
+        android:background="@drawable/fondo_micro_listo"
+        android:contentDescription="@string/accion_micro"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_micro" />
+
+    <ImageButton
+        android:id="@+id/boton_borrar"
+        style="@style/BotonTeclado"
+        android:contentDescription="@string/accion_borrar"
+        android:src="@drawable/ic_borrar" />
+
+    <ImageButton
+        android:id="@+id/boton_enter"
+        style="@style/BotonTeclado"
+        android:contentDescription="@string/accion_enter"
+        android:src="@drawable/ic_enter" />
+</LinearLayout>
