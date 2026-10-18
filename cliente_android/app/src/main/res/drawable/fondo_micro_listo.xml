@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Micrófono en reposo: PÍLDORA (radio mayor que el alto) en verde profundo
+     con contorno de acento. Antes era un rectángulo redondeado de 14dp del
+     mismo verde que la barra de estado; con forma propia se reconoce como el
+     botón de voz y no como un adorno. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="@color/micro_listo" />
-    <corners android:radius="14dp" />
+    <stroke
+        android:width="2dp"
+        android:color="@color/acento" />
+    <corners android:radius="999dp" />
 </shape>

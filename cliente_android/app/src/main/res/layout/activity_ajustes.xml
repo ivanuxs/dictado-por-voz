@@ -19,6 +19,23 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:text="@string/ajustes_encabezado"
+            android:textColor="@color/texto_tecla"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="12dp"
+            android:text="@string/ajustes_subtitulo"
+            android:textColor="@color/texto_tecla_secundario"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="@string/ajustes_ayuda"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="12sp" />
@@ -110,6 +127,49 @@
             android:text="@string/ajustes_vibrar"
             android:textColor="?attr/colorOnSurface" />
 
+        <Switch
+            android:id="@+id/campo_sugerencias"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_sugerencias"
+            android:textColor="?attr/colorOnSurface" />
+
+        <Switch
+            android:id="@+id/campo_autocorreccion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_autocorreccion"
+            android:textColor="?attr/colorOnSurface" />
+
+        <Switch
+            android:id="@+id/campo_portapapeles"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_portapapeles"
+            android:textColor="?attr/colorOnSurface" />
+
+        <Switch
+            android:id="@+id/campo_historial"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_historial"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_historial_ayuda"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/boton_borrar_historial"
+            style="@style/BotonSecundario"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/ajustes_borrar_historial" />
+
         <TextView
             android:id="@+id/etiqueta_tamano"
             android:layout_width="match_parent"
@@ -125,6 +185,7 @@
 
         <Button
             android:id="@+id/boton_guardar"
+            style="@style/BotonPrincipal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
@@ -132,12 +193,14 @@
 
         <Button
             android:id="@+id/boton_probar"
+            style="@style/BotonSecundario"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/ajustes_probar" />
 
         <Button
             android:id="@+id/boton_abrir_teclados"
+            style="@style/BotonSecundario"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
@@ -145,12 +208,14 @@
 
         <Button
             android:id="@+id/boton_elegir_teclado"
+            style="@style/BotonSecundario"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/ajustes_elegir_teclado" />
 
         <Button
             android:id="@+id/boton_volver"
+            style="@style/BotonSecundario"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
@@ -158,6 +223,7 @@
 
         <Button
             android:id="@+id/boton_teja"
+            style="@style/BotonSecundario"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/ajustes_teja" />

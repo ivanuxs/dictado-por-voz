@@ -16,6 +16,7 @@ import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -49,6 +50,10 @@ class AjustesActivity : AppCompatActivity() {
     private lateinit var campoEspera: EditText
     private lateinit var campoNumeros: Switch
     private lateinit var campoVibrar: Switch
+    private lateinit var campoSugerencias: Switch
+    private lateinit var campoAutocorreccion: Switch
+    private lateinit var campoPortapapeles: Switch
+    private lateinit var campoHistorial: Switch
     private lateinit var campoTamano: SeekBar
     private lateinit var etiquetaTamano: TextView
     private lateinit var resultado: TextView
@@ -65,6 +70,10 @@ class AjustesActivity : AppCompatActivity() {
         campoEspera = findViewById(R.id.campo_espera)
         campoNumeros = findViewById(R.id.campo_numeros)
         campoVibrar = findViewById(R.id.campo_vibrar)
+        campoSugerencias = findViewById(R.id.campo_sugerencias)
+        campoAutocorreccion = findViewById(R.id.campo_autocorreccion)
+        campoPortapapeles = findViewById(R.id.campo_portapapeles)
+        campoHistorial = findViewById(R.id.campo_historial)
         campoTamano = findViewById(R.id.campo_tamano)
         etiquetaTamano = findViewById(R.id.etiqueta_tamano)
         resultado = findViewById(R.id.texto_resultado)
@@ -93,6 +102,9 @@ class AjustesActivity : AppCompatActivity() {
             VolverAlDictado.volver(this@AjustesActivity)
         }
         findViewById<Button>(R.id.boton_teja).setOnClickListener { ofrecerTeja() }
+        findViewById<Button>(R.id.boton_borrar_historial).setOnClickListener {
+            confirmarBorradoHistorial()
+        }
 
         pedirMicrofono()
         aplicarEnlace(intent)
@@ -116,6 +128,10 @@ class AjustesActivity : AppCompatActivity() {
         campoEspera.setText(ajustes.segundosEspera.toString())
         campoNumeros.isChecked = ajustes.filaNumeros
         campoVibrar.isChecked = ajustes.vibrar
+        campoSugerencias.isChecked = ajustes.sugerencias
+        campoAutocorreccion.isChecked = ajustes.autocorreccion
+        campoPortapapeles.isChecked = ajustes.sugerirPortapapeles
+        campoHistorial.isChecked = ajustes.guardarHistorial
         // El deslizador va de 0 a (máximo - mínimo); el valor real es mínimo + posición.
         campoTamano.max = Ajustes.ALTURA_MAXIMA - Ajustes.ALTURA_MINIMA
         campoTamano.progress = ajustes.alturaTecla - Ajustes.ALTURA_MINIMA
@@ -138,6 +154,10 @@ class AjustesActivity : AppCompatActivity() {
             campoEspera.text.toString().toIntOrNull() ?: Ajustes.ESPERA_POR_DEFECTO
         ajustes.filaNumeros = campoNumeros.isChecked
         ajustes.vibrar = campoVibrar.isChecked
+        ajustes.sugerencias = campoSugerencias.isChecked
+        ajustes.autocorreccion = campoAutocorreccion.isChecked
+        ajustes.sugerirPortapapeles = campoPortapapeles.isChecked
+        ajustes.guardarHistorial = campoHistorial.isChecked
         ajustes.alturaTecla = Ajustes.ALTURA_MINIMA + campoTamano.progress
         resultado.text = getString(R.string.ajustes_guardado)
     }
@@ -157,6 +177,19 @@ class AjustesActivity : AppCompatActivity() {
                 is Resultado.Error -> respuesta.motivo
             }
         }
+    }
+
+    /** Borra el historial del portapapeles, con confirmación (no se puede deshacer). */
+    private fun confirmarBorradoHistorial() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.ajustes_historial_titulo)
+            .setMessage(R.string.ajustes_historial_pregunta)
+            .setNegativeButton(R.string.ajustes_cancelar, null)
+            .setPositiveButton(R.string.ajustes_borrar_confirmar) { _, _ ->
+                Portapapeles(this).vaciarTodo()
+                resultado.text = getString(R.string.ajustes_historial_borrado)
+            }
+            .show()
     }
 
     /**

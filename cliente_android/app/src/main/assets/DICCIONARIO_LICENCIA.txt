@@ -1,0 +1,25 @@
+Lista de palabras del español (diccionario_es.txt)
+==================================================
+
+Origen de la mayor parte: FrequencyWords, de Hermit Dave
+        https://github.com/hermitdave/FrequencyWords
+        (content/2018/es/es_50k.txt: las 50 000 palabras más frecuentes)
+
+Los recuentos salen de los subtítulos de OpenSubtitles.org (proyecto OPUS).
+
+Licencia: Creative Commons Attribution-ShareAlike 4.0 International
+          https://creativecommons.org/licenses/by-sa/4.0/
+
+Cambios hechos aquí: se dejaron solo palabras en minúsculas (a-z, con
+á é í ó ú ü ñ), se puso la frecuencia al lado separada por un tabulador (para
+que el teclado las ordene de más a menos usadas) y se le añadió una lista corta
+curada a mano con términos del día a día que en subtítulos casi no salen
+(whatsapp, refrigeradora, pantallazo, gasfitero, chifa…), además de subirle la
+frecuencia a unas pocas palabras comunes que el corrector estropeaba
+(usb -> «usa», olla -> «ella», tacho -> «techo»).
+
+Ese añadido propio no tiene licencia de terceros: es una lista de palabras
+comunes. El script que lo genera todo otra vez, con las comprobaciones, es
+`cliente_android/herramientas/generar_diccionario.py`.
+
+Este archivo se distribuye junto a la lista para cumplir con la atribución.

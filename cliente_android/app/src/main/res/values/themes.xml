@@ -5,15 +5,38 @@
          oscuro sobre oscuro: no se leía nada. -->
     <style name="TemaDictado" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/fondo_teclado</item>
+        <!-- La paleta del teclado también manda en la pantalla de ajustes: los
+             interruptores, el cursor y los botones salen en el mismo verde. -->
+        <item name="colorPrimary">@color/acento</item>
+        <item name="colorOnPrimary">@color/fondo_teclado</item>
+        <item name="colorSecondary">@color/acento</item>
+        <item name="colorSurface">@color/superficie</item>
+        <item name="colorOnSurface">@color/texto_tecla</item>
+        <item name="colorOnSurfaceVariant">@color/texto_tecla_secundario</item>
+        <item name="android:colorAccent">@color/acento</item>
+    </style>
+
+    <style name="BotonPrincipal">
+        <item name="android:backgroundTint">@color/acento</item>
+        <item name="android:textColor">@color/fondo_teclado</item>
+    </style>
+
+    <style name="BotonSecundario">
+        <item name="android:backgroundTint">@color/fondo_boton</item>
+        <item name="android:textColor">@color/texto_tecla</item>
     </style>
 
     <style name="BotonTeclado">
         <item name="android:layout_width">48dp</item>
         <item name="android:layout_height">48dp</item>
         <item name="android:layout_margin">4dp</item>
-        <item name="android:background">@drawable/fondo_boton</item>
-        <item name="android:scaleType">centerInside</item>
-        <item name="android:tint">@color/icono</item>
+        <!-- Tecla de función: mismo color que ⇧/⌫ del teclado de letras. -->
+        <item name="android:background">@drawable/fondo_tecla_especial</item>
+        <!-- fitCenter (no centerInside) para que el vector crezca y llene el
+             botón: con centerInside quedaba en sus 24dp de origen. -->
+        <item name="android:padding">9dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:tint">@color/texto_tecla_secundario</item>
     </style>
 
     <style name="EtiquetaAjuste">

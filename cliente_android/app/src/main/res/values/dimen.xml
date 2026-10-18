@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Separación entre teclas. El ALTO se elige en los ajustes de la app
-         (tamaño del teclado) y se guarda en Ajustes.alturaTecla. -->
-    <dimen name="margen_tecla">2dp</dimen>
+    <!-- Sin separación entre teclas: el fondo de cada tecla llena toda su celda,
+         como en Gboard. El área táctil ya era la celda completa; ahora el dibujo
+         también, así que no se pierde ni un píxel visible entre letras. -->
+
+    <!-- Alto de la franja de sugerencias. -->
+    <dimen name="alto_sugerencias">38dp</dimen>
 </resources>

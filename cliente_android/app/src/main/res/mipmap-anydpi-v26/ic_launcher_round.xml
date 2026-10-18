@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Variante redonda del icono: el fondo y el primer plano ya son circulares de
+     por sí, así que es igual que el normal. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_icono_fondo" />
+    <foreground android:drawable="@drawable/ic_icono_frente" />
+</adaptive-icon>

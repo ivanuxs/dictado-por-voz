@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/fondo_boton" />
-    <corners android:radius="10dp" />
-</shape>
+<!-- Fondo de las teclas: se aclara mientras la tecla está pulsada, así el
+     toque se ve al instante y no parece que haya retardo. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:drawable="@drawable/forma_tecla_pulsada" />
+    <item android:drawable="@drawable/forma_tecla_normal" />
+</selector>

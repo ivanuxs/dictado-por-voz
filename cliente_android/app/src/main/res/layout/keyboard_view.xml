@@ -12,19 +12,97 @@
     android:orientation="vertical"
     android:padding="6dp">
 
-    <TextView
-        android:id="@+id/texto_estado"
+    <!-- Línea de estado: punto de color (verde listo, rojo grabando, ámbar
+         transcribiendo, gris error) y el texto a la izquierda. Antes el texto
+         iba centrado y en blanco, sin ninguna marca del estado. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center"
-        android:maxLines="2"
-        android:paddingBottom="4dp"
-        android:text="@string/estado_listo"
-        android:textColor="@color/texto_estado"
-        android:textSize="13sp" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="4dp">
 
-    <FrameLayout
+        <View
+            android:id="@+id/punto_estado"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/punto_estado"
+            android:backgroundTint="@color/acento" />
+
+        <TextView
+            android:id="@+id/texto_estado"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:text="@string/estado_listo"
+            android:textColor="@color/texto_estado"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Franja del portapapeles: aparece sola cuando hay algo copiado y, al
+         tocarla, se pega. Va por encima del teclado y sale en los dos modos
+         (dictado y letras). -->
+    <LinearLayout
+        android:id="@+id/fila_portapapeles"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/fondo_portapapeles"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <!-- El icono es el BOTÓN del historial: un toque abre el panel. El resto
+             de la franja sigue pegando lo último copiado. -->
+        <ImageView
+            android:id="@+id/icono_portapapeles"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/fondo_accion"
+            android:contentDescription="@string/accion_historial"
+            android:padding="6dp"
+            android:src="@drawable/ic_historial"
+            android:tint="@color/acento" />
+
+        <TextView
+            android:id="@+id/texto_portapapeles"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:paddingStart="8dp"
+            android:paddingTop="7dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="7dp"
+            android:textColor="@color/texto_estado"
+            android:textSize="14sp" />
+
+        <!-- Micrófono de la franja: a la derecha de lo copiado y a mano en el
+             modo de letras (en el modo dictado ya está el grande, y se oculta). -->
+        <ImageButton
+            android:id="@+id/boton_micro_franja"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="7dp"
+            android:background="@drawable/fondo_micro_listo"
+            android:contentDescription="@string/accion_micro"
+            android:padding="6dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_micro"
+            android:tint="@color/icono" />
+    </LinearLayout>
+
+    <!-- Vertical para poder poner la barra de sugerencias ENCIMA del teclado. -->
+    <LinearLayout
         android:id="@+id/contenedor"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
 </LinearLayout>

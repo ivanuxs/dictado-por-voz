@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Igual que la tecla normal (plana, sin esquinas redondeadas: ver el
+     comentario de forma_tecla_normal.xml), pero aclarada mientras se mantiene
+     pulsada. El cambio de color es lo único que marca la tecla pulsada. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/fondo_boton_pulsado" />
+</shape>

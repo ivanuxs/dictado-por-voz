@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fila del historial: fondo de la franja del portapapeles y, al tocarla, el
+     mismo aclarado que las teclas. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:drawable="@color/fondo_sugerencia_pulsada" />
+    <item android:drawable="@color/portapapeles_fondo" />
+</selector>

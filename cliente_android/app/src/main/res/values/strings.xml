@@ -4,6 +4,8 @@
     <string name="ime_name">Dictado por voz</string>
     <string name="idioma_es">Español (dictado)</string>
     <string name="ajustes_titulo">Ajustes del dictado</string>
+    <string name="ajustes_encabezado">Dictado por voz</string>
+    <string name="ajustes_subtitulo">Teclado de dictado y edición manual</string>
 
     <!-- Estados del micrófono -->
     <string name="estado_listo">Listo</string>
@@ -18,6 +20,40 @@
     <string name="accion_enter">Enter</string>
     <string name="accion_teclado">Cambiar de teclado</string>
     <string name="aviso_volver">Para volver al dictado: toca la tecla de cambio de teclado del otro teclado (el globo) o el icono de teclado de la barra inferior.</string>
+
+    <!-- Diccionario y sugerencias -->
+    <string name="ajustes_sugerencias">Sugerencias al escribir</string>
+    <string name="ajustes_autocorreccion">Corregir al terminar la palabra</string>
+    <string name="palabra_aprendida">Añadida al diccionario: %1$s</string>
+    <string name="palabra_olvidada">Quitada del diccionario: %1$s</string>
+
+    <!-- Portapapeles -->
+    <string name="accion_pegar">Pegar lo copiado</string>
+    <string name="accion_historial">Historial del portapapeles</string>
+    <string name="ajustes_portapapeles">Ofrecer lo copiado para pegar</string>
+    <string name="portapapeles_titulo">Portapapeles</string>
+    <string name="portapapeles_fijados">FIJADOS</string>
+    <string name="portapapeles_recientes">RECIENTES</string>
+    <string name="portapapeles_vacio">Aún no hay nada guardado.\nCopia texto en cualquier app y aparecerá aquí.</string>
+    <string name="portapapeles_sin_almacen">No se pudo abrir el almacén cifrado del historial.</string>
+    <string name="portapapeles_nota">Se guarda cifrado solo en este celular. Toca para pegar; ★ para fijar.</string>
+    <string name="portapapeles_vaciar">Vaciar</string>
+    <string name="portapapeles_confirmar_vaciar">¿Vaciar?</string>
+    <string name="portapapeles_vaciado">Recientes borrados; los fijados se conservan.</string>
+    <string name="portapapeles_fijado">Fijado</string>
+    <string name="portapapeles_soltado">Ya no está fijado</string>
+    <string name="portapapeles_cerrar">Cerrar</string>
+    <string name="portapapeles_borrar_uno">Borrar esta copia</string>
+    <string name="portapapeles_fijar">Fijar</string>
+    <string name="portapapeles_quitar_fijado">Quitar de fijados</string>
+    <string name="ajustes_historial">Guardar historial del portapapeles</string>
+    <string name="ajustes_historial_ayuda">Se guarda cifrado en el celular. Apagado: solo se ofrece lo último copiado.</string>
+    <string name="ajustes_borrar_historial">Borrar el historial del portapapeles</string>
+    <string name="ajustes_historial_borrado">Historial del portapapeles borrado.</string>
+    <string name="ajustes_historial_titulo">Borrar historial</string>
+    <string name="ajustes_historial_pregunta">Se borrarán todas las copias guardadas, también las fijadas. Esto no se puede deshacer.</string>
+    <string name="ajustes_borrar_confirmar">Borrar</string>
+    <string name="ajustes_cancelar">Cancelar</string>
 
     <!-- Avisos -->
     <string name="falta_permiso_micro">Falta el permiso de micrófono: ábrelo en los ajustes de la app.</string>

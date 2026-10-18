@@ -56,6 +56,8 @@ cliente_android/.gradle/
 cliente_android/build/
 cliente_android/app/build/
 cliente_android/local.properties
+# Lista original del diccionario: se descarga sola con generar_diccionario.py
+cliente_android/herramientas/es_50k.txt
 *.apk
 *.aab
 

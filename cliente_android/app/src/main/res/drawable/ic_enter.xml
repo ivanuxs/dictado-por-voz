@@ -3,7 +3,9 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- El salto de línea va en el color de acento: es la acción que cierra el
+         texto, y así se distingue de ⌫ y ⌨, que son grises. -->
     <path
-        android:fillColor="@color/icono"
+        android:fillColor="@color/acento"
         android:pathData="M19,7v4H5.83l3.58,-3.59L8,6l-6,6 6,6 1.41,-1.41L5.83,13H21V7z" />
 </vector>

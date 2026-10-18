@@ -70,6 +70,33 @@ class Ajustes(contexto: Context) {
         get() = preferencias.getBoolean(VIBRAR, true)
         set(valor) = preferencias.edit().putBoolean(VIBRAR, valor).apply()
 
+    /** Mostrar la barra de sugerencias (y las predicciones) mientras se escribe. */
+    var sugerencias: Boolean
+        get() = preferencias.getBoolean(SUGERENCIAS, true)
+        set(valor) = preferencias.edit().putBoolean(SUGERENCIAS, valor).apply()
+
+    /** Corregir la palabra al terminarla (tildes y erratas de una letra). */
+    var autocorreccion: Boolean
+        get() = preferencias.getBoolean(AUTOCORRECCION, true)
+        set(valor) = preferencias.edit().putBoolean(AUTOCORRECCION, valor).apply()
+
+    /**
+     * Ofrecer en una franja lo que haya en el portapapeles, para pegarlo con un
+     * toque (como hace Gboard). No se guarda nada: solo se lee el portapapeles
+     * del sistema mientras el teclado está en pantalla.
+     */
+    var sugerirPortapapeles: Boolean
+        get() = preferencias.getBoolean(PORTAPAPELES, true)
+        set(valor) = preferencias.edit().putBoolean(PORTAPAPELES, valor).apply()
+
+    /**
+     * Guardar un historial de lo copiado (con fijados) además de la franja.
+     * Va cifrado en su propio archivo; ver `Portapapeles`.
+     */
+    var guardarHistorial: Boolean
+        get() = preferencias.getBoolean(HISTORIAL, true)
+        set(valor) = preferencias.edit().putBoolean(HISTORIAL, valor).apply()
+
     /** ¿Está lo mínimo para intentar dictar? */
     val configurado: Boolean
         get() = urlBase.isNotBlank() && token.isNotBlank()
@@ -95,6 +122,10 @@ class Ajustes(contexto: Context) {
         private const val FILA_NUMEROS = "fila_numeros"
         private const val ALTURA = "altura_tecla"
         private const val VIBRAR = "vibrar"
+        private const val SUGERENCIAS = "sugerencias"
+        private const val AUTOCORRECCION = "autocorreccion"
+        private const val PORTAPAPELES = "sugerir_portapapeles"
+        private const val HISTORIAL = "guardar_historial"
 
         const val ESPERA_POR_DEFECTO = 60
 

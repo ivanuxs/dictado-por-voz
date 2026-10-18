@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fondo normal de una tecla de FUNCIÓN (⇧ ⌫ ?123 ABC ↵ y las laterales del
+     modo dictado). Más oscuro que el de las letras: así el teclado tiene dos
+     niveles y se distingue de un vistazo qué tecla escribe y qué tecla hace
+     algo. Sigue siendo plano y sin esquinas, como el resto (las redondeadas
+     dejaban rombos en los cruces de cuatro teclas). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/fondo_especial" />
+</shape>

@@ -1,12 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="fondo_teclado">#FF1B1B1B</color>
-    <color name="fondo_boton">#FF2A2A2A</color>
-    <color name="texto_estado">#FFBDBDBD</color>
-    <color name="texto_error">#FFEF9A9A</color>
+    <!-- Paleta oscura del teclado.
+         Tres niveles de superficie, no dos: fondo (lo más profundo), teclas de
+         letras y teclas de función (más oscuras que las letras). Esa diferencia
+         es la que hace que el teclado se lea como uno profesional sin dejar de
+         ser plano (las teclas siguen pegadas y sin esquinas redondeadas). -->
+    <color name="fondo_teclado">#FF121417</color>
+    <color name="superficie">#FF1A1D21</color>
+    <color name="fondo_boton">#FF272B30</color>
+    <color name="fondo_boton_pulsado">#FF3A4149</color>
+    <color name="fondo_especial">#FF1C2024</color>
+    <color name="fondo_especial_pulsado">#FF2E353B</color>
+    <!-- ⇧/⇪ encendido: verde tenue con contorno de acento. -->
+    <color name="tecla_activa">#FF1F4634</color>
+
+    <!-- Rótulos: claro en las letras, atenuado en las teclas de función. -->
+    <color name="texto_tecla">#FFE9EDF1</color>
+    <color name="texto_tecla_secundario">#FF9AA5AF</color>
+    <color name="texto_estado">#FF9AA5AF</color>
+    <color name="texto_error">#FFE28A8A</color>
+
+    <!-- Verde de acento: ⇧ activo, ↵, punto de estado y micrófono listo. -->
+    <color name="acento">#FF3DD68C</color>
     <color name="icono">#FFFFFFFF</color>
-    <color name="micro_listo">#FF2E7D32</color>
-    <color name="micro_grabando">#FFC62828</color>
-    <color name="micro_procesando">#FFEF6C00</color>
-    <color name="micro_error">#FF616161</color>
+
+    <!-- Micrófono: verde profundo con borde de acento en reposo; rojo y ámbar
+         sólidos mientras graba o transcribe. -->
+    <color name="micro_listo">#FF1F5C3E</color>
+    <color name="micro_grabando">#FFE0483A</color>
+    <color name="micro_procesando">#FFF0A23C</color>
+    <color name="micro_error">#FF3A4149</color>
+
+    <!-- Contorno de la barra espaciadora (la única tecla con borde). -->
+    <color name="borde_espacio">#26FFFFFF</color>
+
+    <!-- Franja de sugerencias y portapapeles. -->
+    <color name="fondo_sugerencias">#FF16191D</color>
+    <color name="fondo_sugerencia_pulsada">#FF232A31</color>
+    <color name="portapapeles_fondo">#FF1A1E22</color>
+    <color name="portapapeles_borde">#1FFFFFFF</color>
+    <color name="separador">#14FFFFFF</color>
 </resources>

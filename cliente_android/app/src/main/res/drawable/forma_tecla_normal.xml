@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fondo normal de una tecla del teclado de letras.
+     Plano y sin separación: el fondo llena toda la celda de la tecla, así que
+     las teclas se ven como una superficie continua.
+     AQUÍ NO SE REDONDEAN LAS ESQUINAS a propósito: con las teclas pegadas, unas
+     esquinas curvas dejan un rombo en cada cruce de cuatro teclas (se veía muy
+     feo). Antes de eso también había un <inset> de 2dp por lado, que era
+     espacio visible perdido entre letras. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/fondo_boton" />
+</shape>

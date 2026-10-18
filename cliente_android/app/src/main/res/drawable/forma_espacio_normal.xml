@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Barra espaciadora. Es la ÚNICA tecla con contorno, para que se vea dónde
+     empieza y dónde acaba (es la más ancha y, al estar todo plano, se perdía).
+     El borde es de 2dp porque se dibuja centrado en el canto: la mitad queda
+     fuera de la tecla y se ve ~1dp. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/fondo_boton" />
+    <stroke
+        android:width="2dp"
+        android:color="@color/borde_espacio" />
+</shape>

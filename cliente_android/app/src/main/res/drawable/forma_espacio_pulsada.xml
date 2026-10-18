@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Barra espaciadora pulsada: mismo contorno, relleno aclarado. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/fondo_boton_pulsado" />
+    <stroke
+        android:width="2dp"
+        android:color="@color/borde_espacio" />
+</shape>
