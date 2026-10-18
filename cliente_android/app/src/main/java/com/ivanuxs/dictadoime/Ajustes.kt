@@ -48,6 +48,17 @@ class Ajustes(contexto: Context) {
         get() = preferencias.getBoolean(VIVO, false)
         set(valor) = preferencias.edit().putBoolean(VIVO, valor).apply()
 
+    /**
+     * true = dictar con NUESTRO servidor; false (por defecto) = con el
+     * reconocedor del celular, que es el motor de la versión gratuita.
+     *
+     * Estando encendido, si faltan dirección y token se usa el del celular:
+     * la APK pública no lleva credenciales, así que no puede usar el servidor.
+     */
+    var usarServidor: Boolean
+        get() = preferencias.getBoolean(USAR_SERVIDOR, false)
+        set(valor) = preferencias.edit().putBoolean(USAR_SERVIDOR, valor).apply()
+
     /** Cuánto se espera la respuesta antes de rendirse. */
     var segundosEspera: Int
         get() = preferencias.getInt(ESPERA, ESPERA_POR_DEFECTO)
@@ -118,6 +129,7 @@ class Ajustes(contexto: Context) {
         private const val TOKEN = "token"
         private const val CLAVE = "clave_cliente"
         private const val VIVO = "modo_vivo"
+        private const val USAR_SERVIDOR = "usar_servidor"
         private const val ESPERA = "segundos_espera"
         private const val FILA_NUMEROS = "fila_numeros"
         private const val ALTURA = "altura_tecla"

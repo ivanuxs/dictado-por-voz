@@ -227,17 +227,20 @@ permite que una app se ponga por sí sola como teclado (eso exige ser app de sis
 
 ### Dos modos
 
-- **Normal** (por defecto): grabas, tocas para terminar, el audio se manda
-  completo y el texto aparece de golpe. Es el más robusto y el que conviene si
-  la red es mala.
-- **En vivo**: mientras hablas, el servidor va cerrando frases por las pausas y
-  el teclado las va escribiendo; al terminar, el último texto reemplaza al
-  provisional. Se activa en los ajustes.
+- **Normal** (por defecto): el audio se envía **mientras hablas** por WebSocket (sin
+  parciales). Al tocar terminar, la subida ya está hecha y solo queda la transcripción,
+  así que el texto sale enseguida. Si el WebSocket falla o no confirma, el audio completo
+  se manda por REST como respaldo: el dictado no se pierde.
+- **En vivo**: mientras hablas, el servidor va cerrando frases por las pausas y el teclado
+  las va escribiendo (texto en composición, subrayado); al terminar, el texto definitivo lo
+  sustituye. Se activa en los ajustes. **No hace falta** para que la respuesta sea rápida:
+  el modo normal también responde en cuanto terminas y no reescribe lo ya mostrado.
 
 ### Límites que conviene conocer
 
-- Máximo **60 segundos** de audio por dictado y **5 MB** por petición (los pone
-  el puente). Un dictado largo: pártelo en dos.
+- La ruta **REST** admite hasta **60 segundos** y **5 MB** por dictado (los pone el puente).
+- El **streaming** del modo normal no lleva ese corte; el límite práctico es lo que tarde
+  en transcribirse el audio completo.
 - Los dictados son **de uno en uno** (el servidor tiene un solo modelo): si hay
   otro dictado en curso, el tuyo espera unos segundos.
 - Si hay un **lote de audio largo** transcribiéndose en el servidor, puedes
@@ -256,7 +259,7 @@ permite que una app se ponga por sí sola como teclado (eso exige ser app de sis
 | `Ajustes.kt` | Ajustes cifrados (`EncryptedSharedPreferences`). |
 | `AjustesActivity.kt` | Pantalla de ajustes y permiso de micrófono. |
 
-Total: **2576 líneas** con comentarios, repartidas en 10 archivos. El diccionario
+Total: **3965 líneas** con comentarios, repartidas en 13 archivos. El diccionario
 aporta **655 KB** de datos que viajan dentro del APK (se comprimen solos al empaquetar).
 
 La lista de palabras se rehace con `cliente_android/herramientas/generar_diccionario.py`,
@@ -287,9 +290,13 @@ que también comprueba que el corrector no estropee ninguna palabra curada.
   planeta de Gboard) y, si el equipo la bloquea, cae al público
   `showInputMethodPicker()`. La variante pública `switchToPreviousInputMethod()` **no
 existe** en el `android.jar` de android-34 con el que se compila aquí.
-- El texto del modo en vivo se escribe con `commitText` y se corrige con
-  `deleteSurroundingText`. Si mueves el cursor a mitad del dictado, el reemplazo
-  puede afectar al texto equivocado: no cambies de posición mientras dictas.
+- El texto del modo en vivo se escribe como **composición** (`setComposingText`) y el
+  texto final lo sustituye con `commitText`. Antes se borraba contando caracteres con
+  `deleteSurroundingText`, y en WhatsApp ese borrado no se aplicaba: quedaba el texto en
+  vivo y encima se añadía el completo, que es el duplicado que se veía al terminar.
+- **No se manda audio hasta que el puente responde `listo`.** Si se mandaba antes, el
+  `fin` podía llegar a una sesión que todavía no existía («No hay ningún dictado en
+  curso») y ese aviso tapaba el error real.
 - Sin el permiso de `RECORD_AUDIO` el teclado no falla en silencio: muestra el
   aviso en la barra de estado del propio teclado.
 - **El modo del teclado no se guarda**: `onStartInputView` vuelve siempre al modo de

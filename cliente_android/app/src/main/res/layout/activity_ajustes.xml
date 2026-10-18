@@ -81,6 +81,23 @@
             android:textColor="?attr/colorOnSurface"
             android:textColorHint="?attr/colorOnSurfaceVariant" />
 
+        <!-- Motor del dictado: el del celular (gratis) o nuestro servidor
+             (solo con dirección y token). -->
+        <Switch
+            android:id="@+id/campo_servidor"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/ajustes_usar_servidor"
+            android:textColor="?attr/colorOnSurface" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/ajustes_usar_servidor_ayuda"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="12sp" />
+
         <Switch
             android:id="@+id/campo_vivo"
             android:layout_width="match_parent"

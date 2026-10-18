@@ -38,3 +38,11 @@ TAMANO_MAXIMO = MAX_MB * 1024 * 1024
 CONCURRENTES = _entero("DICTADO_CONCURRENTES", 2)
 ESPERA_MAXIMA = _entero("DICTADO_ESPERA_MAXIMA", 30)
 TIMEOUT_TRANSCRIPCION = _entero("DICTADO_TIMEOUT", 120)
+
+# Modelo para los parciales del dictado en vivo. Solo afecta a este puente, es
+# decir, al teclado del celular: el servidor lo recibe en el DICTADO_START
+# (`vivo:medium`) y los clientes de escritorio siguen con el modelo principal.
+# Vacío = el que tenga configurado el servidor. Medido con el micrófono de un
+# celular: small ~0,7 s por frase pero inventa palabras, medium ~1,7 s y
+# acierta casi todo, large-v3 ~2,6 s y es exacto.
+MODELO_PARCIALES = os.environ.get("DICTADO_MODELO_PARCIALES", "").strip().lower()

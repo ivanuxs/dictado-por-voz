@@ -9,6 +9,14 @@
     <!-- Aviso háptico al empezar y terminar de grabar. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Android 11+ oculta los paquetes instalados: sin esta consulta, el
+         reconocedor de voz del celular puede parecer inexistente para la app. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

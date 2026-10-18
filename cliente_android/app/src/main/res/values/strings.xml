@@ -6,12 +6,16 @@
     <string name="ajustes_titulo">Ajustes del dictado</string>
     <string name="ajustes_encabezado">Dictado por voz</string>
     <string name="ajustes_subtitulo">Teclado de dictado y edición manual</string>
+    <string name="ajustes_usar_servidor">Usar mi servidor de dictado</string>
+    <string name="ajustes_usar_servidor_ayuda">Apagado, dicta el reconocedor del celular: gratis y sin cuenta. Encendido, usa el servidor (más preciso), que necesita dirección y token.</string>
+    <string name="ajustes_servidor_sin_credenciales">Ajustes guardados. Sin dirección y token se usará el reconocedor del celular.</string>
 
     <!-- Estados del micrófono -->
     <string name="estado_listo">Listo</string>
     <string name="estado_grabando">Grabando… toca para terminar</string>
     <string name="estado_procesando">Transcribiendo…</string>
     <string name="estado_error">Error</string>
+    <string name="estado_escuchando">Escuchando: %1$s</string>
     <string name="edicion_estado">Edición manual · toca 🎤 para volver al dictado</string>
 
     <!-- Acciones del teclado -->
@@ -58,7 +62,18 @@
     <!-- Avisos -->
     <string name="falta_permiso_micro">Falta el permiso de micrófono: ábrelo en los ajustes de la app.</string>
     <string name="falta_configurar">Configura la dirección del puente y el token en los ajustes de la app.</string>
+
+    <!-- Dictado con el reconocedor del celular -->
+    <string name="nativo_sin_texto">No se oyó nada. Toca el micrófono y habla más cerca.</string>
+    <string name="nativo_sin_red">El dictado del celular necesita conexión (o descarga el idioma sin conexión en los ajustes de voz de Android).</string>
+    <string name="nativo_ocupado">El reconocedor del celular está ocupado. Espera un momento.</string>
+    <string name="nativo_sin_micro">No se pudo usar el micrófono para el dictado.</string>
+    <string name="nativo_idioma">El celular no tiene ese idioma para dictado. Añádelo en los ajustes de voz de Android.</string>
+    <string name="nativo_error">El reconocedor del celular falló. Prueba otra vez.</string>
+    <string name="nativo_no_disponible">Este celular no tiene reconocedor de voz. Instala uno o usa el servidor.</string>
+    <string name="nativo_sin_campo">No hay un campo de texto donde escribir.</string>
     <string name="error_micro">No se pudo abrir el micrófono.</string>
+    <string name="error_inicio_vivo">El puente no confirmó el dictado en vivo. Inténtalo otra vez.</string>
     <string name="sin_audio">No se capturó audio.</string>
 
     <!-- Pantalla de ajustes -->
@@ -68,7 +83,7 @@
     <string name="ajustes_clave">Clave del proxy (cabecera X-Clave-Cliente)</string>
     <string name="ajustes_clave_ayuda">Si el proxy no la pide, déjala vacía.</string>
     <string name="ajustes_vivo">Dictado en vivo (inserta el texto mientras hablo)</string>
-    <string name="ajustes_vivo_ayuda">Desactivado: se envía el audio al terminar de hablar, que es lo más robusto.</string>
+    <string name="ajustes_vivo_ayuda">Desactivado: el audio se envía mientras hablas y el texto aparece al terminar, que es lo más rápido y lo más robusto.</string>
     <string name="ajustes_espera">Segundos de espera de respuesta</string>
     <string name="ajustes_teclado">Teclado</string>
     <string name="ajustes_fila_numeros">Fila de números arriba</string>

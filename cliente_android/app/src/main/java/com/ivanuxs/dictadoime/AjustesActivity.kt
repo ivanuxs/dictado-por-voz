@@ -47,6 +47,7 @@ class AjustesActivity : AppCompatActivity() {
     private lateinit var campoToken: EditText
     private lateinit var campoClave: EditText
     private lateinit var campoVivo: Switch
+    private lateinit var campoServidor: Switch
     private lateinit var campoEspera: EditText
     private lateinit var campoNumeros: Switch
     private lateinit var campoVibrar: Switch
@@ -67,6 +68,7 @@ class AjustesActivity : AppCompatActivity() {
         campoToken = findViewById(R.id.campo_token)
         campoClave = findViewById(R.id.campo_clave)
         campoVivo = findViewById(R.id.campo_vivo)
+        campoServidor = findViewById(R.id.campo_servidor)
         campoEspera = findViewById(R.id.campo_espera)
         campoNumeros = findViewById(R.id.campo_numeros)
         campoVibrar = findViewById(R.id.campo_vibrar)
@@ -125,6 +127,7 @@ class AjustesActivity : AppCompatActivity() {
         campoToken.setText(ajustes.token)
         campoClave.setText(ajustes.claveCliente)
         campoVivo.isChecked = ajustes.modoVivo
+        campoServidor.isChecked = ajustes.usarServidor
         campoEspera.setText(ajustes.segundosEspera.toString())
         campoNumeros.isChecked = ajustes.filaNumeros
         campoVibrar.isChecked = ajustes.vibrar
@@ -150,6 +153,7 @@ class AjustesActivity : AppCompatActivity() {
         ajustes.token = campoToken.text.toString()
         ajustes.claveCliente = campoClave.text.toString()
         ajustes.modoVivo = campoVivo.isChecked
+        ajustes.usarServidor = campoServidor.isChecked
         ajustes.segundosEspera =
             campoEspera.text.toString().toIntOrNull() ?: Ajustes.ESPERA_POR_DEFECTO
         ajustes.filaNumeros = campoNumeros.isChecked
@@ -159,7 +163,15 @@ class AjustesActivity : AppCompatActivity() {
         ajustes.sugerirPortapapeles = campoPortapapeles.isChecked
         ajustes.guardarHistorial = campoHistorial.isChecked
         ajustes.alturaTecla = Ajustes.ALTURA_MINIMA + campoTamano.progress
-        resultado.text = getString(R.string.ajustes_guardado)
+        // El servidor sin credenciales no sirve: se avisa de que se usará el
+        // reconocedor del celular (es la situación de la versión gratuita).
+        resultado.text = getString(
+            if (campoServidor.isChecked && !ajustes.configurado) {
+                R.string.ajustes_servidor_sin_credenciales
+            } else {
+                R.string.ajustes_guardado
+            }
+        )
     }
 
     private fun probar() {

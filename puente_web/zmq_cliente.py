@@ -41,11 +41,13 @@ class SesionDictado:
     cerrar la pestaña a mitad y hay que dejar el servidor limpio igual.
     """
 
-    def __init__(self, cliente, vivo=False, al_parcial=None, timeout=120.0):
+    def __init__(self, cliente, vivo=False, al_parcial=None, timeout=120.0,
+                 modelo=""):
         self._cliente = cliente
         self._vivo = vivo
         self._al_parcial = al_parcial
         self._timeout = timeout
+        self._modelo = modelo or ""
         self._socket = None
         self._parciales = []
         self._futuro = None
@@ -58,10 +60,14 @@ class SesionDictado:
         """Toma el turno, conecta si hace falta y pide empezar a acumular."""
         await self._cliente.entrar()
         self._socket = self._cliente.socket()
+        # El modelo de los parciales va en el propio arranque: `vivo:medium`.
+        orden = b""
+        if self._vivo:
+            orden = MODO_VIVO
+            if self._modelo:
+                orden += b":" + self._modelo.encode("ascii", "ignore")
         try:
-            await self._socket.send_multipart(
-                [DICTADO_START, MODO_VIVO if self._vivo else b""]
-            )
+            await self._socket.send_multipart([DICTADO_START, orden])
         except Exception:
             self._cliente.salir()
             raise
@@ -118,6 +124,14 @@ class SesionDictado:
                 await self._socket.send_multipart([DICTADO_STOP, b""])
                 await asyncio.wait_for(self._descartar_respuesta(), TIMEOUT_CIERRE)
 
+        # Un dictado en vivo termina con TEXTO y DESPUÉS FIN_DICTADO: el lector
+        # ya resolvió el futuro con el TEXTO y se canceló, así que el
+        # FIN_DICTADO (y cualquier parcial atrasado) queda en el socket. Sin
+        # vaciarlo, el próximo dictado leería mensajes del anterior y todo iría
+        # un dictado por detrás. El turno sigue tomado, así que aquí no puede
+        # haber mensajes del dictado siguiente.
+        await self._descartar_resto()
+
         self._abierta = False
         self._cliente.salir()
 
@@ -170,14 +184,31 @@ class SesionDictado:
             if frames[0] in (TEXTO, ESTADO, FIN_DICTADO):
                 return
 
+    async def _descartar_resto(self):
+        """Tira los mensajes que queden pendientes de esta sesión.
+
+        Lee hasta que el socket se queda callado (0,2 s). Es lo que evita que
+        el FIN_DICTADO del cierre en vivo, o un TEXTO_PARCIAL atrasado, se lea
+        en la sesión siguiente.
+        """
+        if self._socket is None:
+            return
+        while True:
+            try:
+                await asyncio.wait_for(self._socket.recv_multipart(), 0.2)
+            except (asyncio.TimeoutError, zmq.ZMQError):
+                return
+
 
 class ClienteDictado:
     """Conexión persistente con el servidor de dictado."""
 
-    def __init__(self, direccion, token_zmq="", timeout=120.0):
+    def __init__(self, direccion, token_zmq="", timeout=120.0,
+                 modelo_parciales=""):
         self.direccion = direccion
         self.token = token_zmq
         self.timeout = timeout
+        self.modelo_parciales = modelo_parciales or ""
         self._contexto = zmq.asyncio.Context()
         self._socket = None
         self._candado = None  # se crea al primer uso, ya dentro del bucle
@@ -213,7 +244,11 @@ class ClienteDictado:
     def sesion(self, vivo=False, al_parcial=None):
         """Crea una sesión de dictado (no la abre todavía)."""
         return SesionDictado(
-            self, vivo=vivo, al_parcial=al_parcial, timeout=self.timeout
+            self,
+            vivo=vivo,
+            al_parcial=al_parcial,
+            timeout=self.timeout,
+            modelo=self.modelo_parciales if vivo else "",
         )
 
     async def transcribir(self, pcm, vivo=False):

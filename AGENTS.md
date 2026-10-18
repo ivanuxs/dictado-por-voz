@@ -57,10 +57,13 @@ dictado por voz/                    ← Carpeta del CLIENTE (PC usuario)
 ```
 
 > **El servidor de transcripción ya no vive en este repositorio.** Está en su propio
-> repositorio y carpeta: `/home/ivan/Documentos/servidor_dictado`
+> repositorio y carpeta: `/home/ivan/Nextcloud/Proyectos/servidor_dictado`
 > (`github.com/ivanuxs/servidor-voz`), donde es un **servicio de sistema** que usa
-> faster-whisper `large-v3` en la GPU. Este repositorio **no lo modifica**: solo se
+> faster-whisper `large-v3` en la GPU: los parciales del modo vivo se decodifican en voraz
+> (beam 1, temperatura 0, sin timestamps) y el `TEXTO` final con beam 5, fallback de
+> temperaturas y timestamps. Este repositorio **no lo modifica**: solo se
 > comunica con él (el cliente de Linux/Windows por ZMQ y el puente web por ZMQ local).
+> El modelo se elige en el servidor, así que el cambio alcanza a **todos** los clientes.
 
 ## Características principales
 
@@ -132,6 +135,11 @@ lo manda al puente y escribe el texto. **No hay lógica de transcripción aquí.
 - Las herramientas se instalan sin sudo con `cliente_android/herramientas/instalar_sdk.sh`
   (JDK 17 + SDK 34 + Gradle 8.7 en `~/Android`).
 - **Java 25 no sirve para el plugin de Android**: hay que usar el JDK 17.
+- **Dictado**: en el modo normal (por defecto) el audio se manda por WebSocket
+  **mientras hablas** y el texto final llega al terminar; si esa conexión falla o no
+  confirma, el búfer completo se reenvía por REST. El **modo en vivo** (parciales por
+  frase) sigue existiendo pero es opcional y está apagado: el texto provisional se
+  sustituye al final y no aporta velocidad.
 - Las credenciales (dirección, token y clave) van **dentro del APK**, leídas de
   `cliente_android/local.properties` (no versionado) como `BuildConfig`. La app no
   obliga a escribir nada en el celular. También acepta configurarse por enlace:

@@ -6,11 +6,14 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.inputmethodservice.InputMethodService
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.text.InputType
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -54,9 +57,13 @@ class ServicioTecladoVoz : InputMethodService() {
     private lateinit var barra: BarraSugerencias
     private lateinit var teclado: TecladoLetras
     private lateinit var historial: Portapapeles
+    private lateinit var nativo: ReconocedorNativo
     private var panel: PanelPortapapeles? = null
     private var panelAbierto = false
     private var modoEdicion = false
+
+    /** Repetición del borrado mientras se mantiene pulsada la ⌫ del modo dictado. */
+    private val repeticionBorrado = Handler(Looper.getMainLooper())
     private var alturaPintada = -1
     private var numerosPintados: Boolean? = null
 
@@ -76,6 +83,7 @@ class ServicioTecladoVoz : InputMethodService() {
     private var autocorreccionActiva = true
     private var portapapelesActivo = true
     private var historialActivo = true
+    private var motorNativo = true
 
     /** El campo es de contraseña: aquí no se ofrece ni se guarda el portapapeles. */
     private var enCampoSecreto = false
@@ -90,6 +98,15 @@ class ServicioTecladoVoz : InputMethodService() {
     private var tarea: Job? = null
     private var sesion: SesionViva? = null
     private var largoInsertado = 0
+
+    /**
+     * Tramos del dictado vivo ya escritos en el campo.
+     *
+     * Cada parcial del puente es un TRAMO NUEVO (una frase), no el texto
+     * acumulado: el texto final es la unión de todos. Hay que guardarlos para
+     * poder enseñar el dictado completo y no solo el último tramo.
+     */
+    private val tramosVivos = ArrayList<String>()
 
     // --- Estado del diccionario (sugerencias y corrección) ----------------
 
@@ -121,6 +138,7 @@ class ServicioTecladoVoz : InputMethodService() {
         micro = GestorAudio()
         diccionario = Diccionario(this)
         historial = Portapapeles(this)
+        nativo = ReconocedorNativo(this)
         portapapeles = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         portapapeles.addPrimaryClipChangedListener(oyentePortapapeles)
         // La lista de palabras se carga en segundo plano: el teclado no espera.
@@ -158,6 +176,7 @@ class ServicioTecladoVoz : InputMethodService() {
      */
     private fun mostrarModo(edicion: Boolean) {
         // El panel del historial nunca sobrevive a un cambio de modo.
+        repeticionBorrado.removeCallbacksAndMessages(null)
         panel?.liberar()
         panel = null
         panelAbierto = false
@@ -180,7 +199,7 @@ class ServicioTecladoVoz : InputMethodService() {
             val vista = layoutInflater.inflate(R.layout.vista_dictado, contenedor, false)
             botonMicro = vista.findViewById(R.id.boton_micro)
             botonMicro.setOnClickListener { alternar() }
-            vista.findViewById<View>(R.id.boton_borrar).setOnClickListener { borrarCaracter() }
+            prepararBorradoContinuo(vista.findViewById(R.id.boton_borrar))
             vista.findViewById<View>(R.id.boton_enter).setOnClickListener { sendKeyChar('\n') }
             // Un toque pasa a nuestro teclado de letras; mantener pulsado abre el
             // selector del sistema (respaldo, para quien quiera Gboard).
@@ -256,8 +275,11 @@ class ServicioTecladoVoz : InputMethodService() {
         leerCampo(info)
         // Los ajustes que se miran al teclear, frescos (por si se cambiaron).
         refrescarAjustesDeTecleo()
+        // Si se vuelve a abrir el teclado no hay dictado en marcha: la línea de
+        // estado vuelve a «Listo» (antes podía quedarse en «Escuchando…»).
+        if (!nativo.escuchando && !micro.grabando) mostrar(Estado.LISTO)
         if (::contenedor.isInitialized &&
-            (modoEdicion ||
+            (panelAbierto || modoEdicion ||
                 alturaPintada != ajustes.alturaTecla || numerosPintados != ajustes.filaNumeros)
         ) {
             mostrarModo(false)
@@ -315,6 +337,10 @@ class ServicioTecladoVoz : InputMethodService() {
         autocorreccionActiva = ajustes.autocorreccion
         portapapelesActivo = ajustes.sugerirPortapapeles
         historialActivo = ajustes.guardarHistorial
+        // El servidor se usa solo si el usuario lo eligió Y hay credenciales:
+        // la versión gratuita (sin dirección ni token) siempre dicta con el
+        // reconocedor del celular.
+        motorNativo = !ajustes.usarServidor || !ajustes.configurado
     }
 
     /**
@@ -341,22 +367,39 @@ class ServicioTecladoVoz : InputMethodService() {
         // Un último volcado de lo aprendido, en un alcance aparte: el del
         // servicio se cancela justo después y no le daría tiempo.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { diccionario.volcar() }
+        nativo.liberar()
+        repeticionBorrado.removeCallbacksAndMessages(null)
         portapapeles.removePrimaryClipChangedListener(oyentePortapapeles)
         alcance.cancel()
         micro.liberar()
         super.onDestroy()
     }
 
+    /**
+     * Al ocultarse el teclado se cancela el reconocedor del celular: no puede
+     * quedarse escuchando de fondo (gastaría batería y podría escribir en otra
+     * app).
+     */
+    override fun onFinishInputView(finishingInput: Boolean) {
+        nativo.cancelar()
+        super.onFinishInputView(finishingInput)
+    }
+
     // --- Dictado ---------------------------------------------------------
 
     private fun alternar() {
-        if (micro.grabando) {
-            terminarDictado()
-        } else {
-            empezarDictado()
+        when {
+            nativo.escuchando -> pararNativo()
+            micro.grabando -> terminarDictado()
+            else -> empezarDictado()
         }
     }
 
+    /**
+     * Elige el motor: el reconocedor del celular (versión gratuita) o nuestro
+     * servidor (miembros, con dirección y token). Si el celular no trae
+     * reconocedor y hay servidor configurado, se usa el servidor.
+     */
     private fun empezarDictado() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -364,6 +407,66 @@ class ServicioTecladoVoz : InputMethodService() {
             mostrar(Estado.ERROR, getString(R.string.falta_permiso_micro))
             return
         }
+        if (motorNativo) {
+            if (nativo.disponible()) {
+                empezarNativo()
+                return
+            }
+            if (!ajustes.configurado) {
+                mostrar(Estado.ERROR, getString(R.string.nativo_no_disponible))
+                return
+            }
+        }
+        empezarServidor()
+    }
+
+    /** Dictado con el reconocedor del propio celular (sin servidor ni cuenta). */
+    private fun empezarNativo() {
+        largoInsertado = 0
+        if (!nativo.empezar(avisosNativo)) {
+            mostrar(Estado.ERROR, getString(R.string.nativo_no_disponible))
+            return
+        }
+        vibrar(VIBRACION_CORTA)
+        mostrar(Estado.GRABANDO)
+    }
+
+    private fun pararNativo() {
+        nativo.parar()
+        vibrar(VIBRACION_CORTA)
+        mostrar(Estado.PROCESANDO)
+    }
+
+    /** Lo que avisa el reconocedor del celular mientras se dicta. */
+    private val avisosNativo = object : ReconocedorNativo.Avisos {
+        override fun alParcial(texto: String) {
+            // El parcial solo se enseña en la línea de estado: el texto se
+            // inserta al final (si el reconocedor reinicia la frase, escribir
+            // en vivo dejaría texto duplicado).
+            mostrar(Estado.GRABANDO, parcial = texto)
+        }
+
+        override fun alFinal(texto: String) {
+            val conexion = currentInputConnection
+            if (conexion == null) {
+                mostrar(Estado.ERROR, getString(R.string.nativo_sin_campo))
+                return
+            }
+            marcarEdicion()
+            deshacer = null
+            conexion.commitText(texto, 1)
+            vibrar(VIBRACION_CORTA)
+            mostrar(Estado.LISTO)
+            sincronizarDesdeTexto()
+        }
+
+        override fun alError(motivo: String) {
+            mostrar(Estado.ERROR, motivo)
+        }
+    }
+
+    /** Dictado con nuestro servidor (el de siempre, para miembros). */
+    private fun empezarServidor() {
         if (!ajustes.configurado) {
             mostrar(Estado.ERROR, getString(R.string.falta_configurar))
             return
@@ -374,31 +477,86 @@ class ServicioTecladoVoz : InputMethodService() {
         }
         vibrar(VIBRACION_CORTA)
         largoInsertado = 0
+        tramosVivos.clear()
         mostrar(Estado.GRABANDO)
 
         if (ajustes.modoVivo) empezarVivo() else empezarNormal()
     }
 
-    /** Modo normal: se acumula el audio y se manda entero al terminar. */
+    /**
+     * Modo normal: el texto sale al terminar, sin parciales.
+     *
+     * El audio se envía por WebSocket MIENTRAS se habla: así, al pulsar
+     * terminar, la subida ya está hecha y solo queda la transcripción. El
+     * búfer local se guarda igual, y si el WebSocket falla o no confirma a
+     * tiempo se manda el audio completo por REST como antes.
+     */
     private fun empezarNormal() {
         val acumulado = ByteArrayOutputStream()
+        val nueva = ClienteRed(ajustes).sesionViva(avisosSinTexto(), vivo = false)
+        sesion = nueva
+        val puedeFluir = nueva.abrir()
         tarea = alcance.launch {
+            val listo = puedeFluir &&
+                withContext(Dispatchers.IO) { nueva.esperarListo(ESPERA_INICIO_MS) }
+            if (listo) {
+                // Lo hablado mientras conectaba se manda de golpe.
+                withContext(Dispatchers.IO) { nueva.enviar(acumulado.toByteArray()) }
+            }
             while (isActive && micro.grabando) {
                 val bloque = withContext(Dispatchers.IO) { micro.leer() }
-                if (bloque != null) acumulado.write(bloque)
+                if (bloque != null) {
+                    acumulado.write(bloque)
+                    if (listo && !nueva.fallo) nueva.enviar(bloque)
+                }
             }
             micro.liberar()
-            val pcm = acumulado.toByteArray()
-            if (pcm.isEmpty()) {
-                mostrar(Estado.ERROR, getString(R.string.sin_audio))
+            mostrar(Estado.PROCESANDO)
+
+            var texto: String? = null
+            if (listo && !nueva.fallo) {
+                nueva.terminar()
+                texto = withContext(Dispatchers.IO) { nueva.esperarFinal(ESPERA_FINAL_MS) }
+            }
+            cerrarSesion()
+
+            if (texto.isNullOrBlank()) {
+                // Respaldo: el audio que quedó en memoria va entero por REST.
+                val pcm = acumulado.toByteArray()
+                if (pcm.isEmpty()) {
+                    mostrar(Estado.ERROR, getString(R.string.sin_audio))
+                    return@launch
+                }
+                val resultado = withContext(Dispatchers.IO) {
+                    ClienteRed(ajustes).transcribir(pcm)
+                }
+                cuandoTermine(resultado)
                 return@launch
             }
-            mostrar(Estado.PROCESANDO)
-            val resultado = withContext(Dispatchers.IO) {
-                ClienteRed(ajustes).transcribir(pcm)
+
+            val conexion = currentInputConnection
+            if (conexion == null) {
+                mostrar(Estado.ERROR, getString(R.string.nativo_sin_campo))
+                return@launch
             }
-            cuandoTermine(resultado)
+            marcarEdicion()
+            deshacer = null
+            conexion.commitText(texto, 1)
+            vibrar(VIBRACION_CORTA)
+            mostrar(Estado.LISTO)
+            sincronizarDesdeTexto()
         }
+    }
+
+    /**
+     * Avisos del modo normal con streaming: el texto final se recoge con
+     * `esperarFinal` y un fallo del WebSocket no corta la grabación (se
+     * resuelve con el respaldo por REST al terminar).
+     */
+    private fun avisosSinTexto() = object : AvisosVivo {
+        override fun alParcial(texto: String) = Unit
+        override fun alFinal(texto: String) = Unit
+        override fun alError(motivo: String) = Unit
     }
 
     /** Modo vivo: el audio sale por WebSocket y el texto se inserta al vuelo. */
@@ -411,13 +569,31 @@ class ServicioTecladoVoz : InputMethodService() {
             return
         }
         tarea = alcance.launch {
-            while (isActive && micro.grabando) {
+            // Hasta que el puente no confirme «listo» no se manda audio: si el
+            // inicio se rechaza, ese audio se tira y el `fin` llegaría a una
+            // sesión inexistente («No hay ningún dictado en curso»).
+            val confirmado = withContext(Dispatchers.IO) {
+                nueva.esperarListo(ESPERA_INICIO_MS)
+            }
+            if (!confirmado) {
+                micro.liberar()
+                if (sesion === nueva) {
+                    // Si el puente dio un motivo, ya se está mostrando.
+                    if (!nueva.fallo) mostrar(Estado.ERROR, getString(R.string.error_inicio_vivo))
+                    nueva.cancelar()
+                    cerrarSesion()
+                }
+                return@launch
+            }
+            while (isActive && micro.grabando && !nueva.fallo) {
                 val bloque = withContext(Dispatchers.IO) { micro.leer() }
                 if (bloque != null) nueva.enviar(bloque)
             }
             micro.liberar()
-            mostrar(Estado.PROCESANDO)
-            nueva.terminar()
+            if (!nueva.fallo) {
+                mostrar(Estado.PROCESANDO)
+                nueva.terminar()
+            }
         }
     }
 
@@ -453,28 +629,82 @@ class ServicioTecladoVoz : InputMethodService() {
         }
 
         override fun alError(motivo: String) {
-            alcance.launch { mostrar(Estado.ERROR, motivo) }
+            alcance.launch {
+                // Se corta la grabación: si se sigue enviando audio, al parar
+                // se manda un `fin` a una sesión que el puente ya no tiene.
+                micro.detener()
+                // Lo que alcanzó a verse en vivo queda como texto normal: si no
+                // se cierra la composición, el campo puede descartarlo luego.
+                confirmarComposicion()
+                mostrar(Estado.ERROR, motivo)
+            }
             cerrarSesion()
         }
     }
 
-    /** Escribe el avance del dictado vivo, reemplazando el parcial anterior. */
+    /**
+     * Escribe el avance del dictado vivo.
+     *
+     * El puente manda cada parcial como un TRAMO NUEVO (una frase), no el texto
+     * acumulado, así que se guardan todos y se reescribe el bloque completo: el
+     * texto se ve desde el principio y sigue creciendo.
+     *
+     * Si un tramo CONTINÚA al anterior (empieza igual y es más largo), lo
+     * reemplaza: cubre también a los servidores que mandan la frase creciendo.
+     *
+     * Se escribe con `setComposingText`, o sea como TEXTO EN COMPOSICIÓN: el
+     * propio campo reemplaza la composición anterior, sin borrar por cuenta de
+     * caracteres. El borrado con `deleteSurroundingText` no es fiable en todas
+     * las apps (en WhatsApp se quedaba lo escrito en vivo y encima se añadía el
+     * texto final completo, que es el duplicado que se veía al terminar).
+     */
     private fun insertarParcial(texto: String) {
         val conexion = currentInputConnection ?: return
-        if (largoInsertado > 0) conexion.deleteSurroundingText(largoInsertado, 0)
-        val nuevo = if (texto.isBlank()) "" else "$texto "
-        conexion.commitText(nuevo, 1)
-        largoInsertado = nuevo.length
+        val tramo = texto.trim()
+        if (tramo.isEmpty()) return
+        if (tramosVivos.isEmpty()) {
+            tramosVivos.add(tramo)
+        } else {
+            val ultimo = tramosVivos.last()
+            if (tramo == ultimo) return
+            if (tramo.startsWith(ultimo)) {
+                tramosVivos[tramosVivos.lastIndex] = tramo
+            } else {
+                tramosVivos.add(tramo)
+            }
+        }
+        val completo = tramosVivos.joinToString(" ") + " "
+        conexion.setComposingText(completo, 1)
+        largoInsertado = completo.length
     }
 
-    /** Cambia el último parcial por el texto definitivo. */
+    /**
+     * Cambia la composición por el texto definitivo y limpia los tramos.
+     *
+     * `commitText` sustituye por sí mismo la composición en curso, así que aquí
+     * no se borra nada: se confirma el texto final o, si ya es exactamente el
+     * que se está viendo, solo se cierra la composición (sin parpadeo).
+     */
     private fun reemplazarParcial(texto: String) {
         val conexion = currentInputConnection ?: return
-        if (largoInsertado > 0) {
-            conexion.deleteSurroundingText(largoInsertado, 0)
-            largoInsertado = 0
+        val definitivo = texto.trim()
+        val visto = tramosVivos.joinToString(" ").trim()
+        if (largoInsertado > 0 && (definitivo.isEmpty() || definitivo == visto)) {
+            // Nada nuevo que escribir: se confirma lo que ya está en el campo.
+            conexion.finishComposingText()
+        } else if (definitivo.isNotEmpty()) {
+            conexion.commitText(definitivo, 1)
+            conexion.finishComposingText()
         }
-        if (texto.isNotBlank()) conexion.commitText(texto, 1)
+        largoInsertado = 0
+        tramosVivos.clear()
+    }
+
+    /** Da por bueno lo que haya en composición y deja de seguirlo. */
+    private fun confirmarComposicion() {
+        if (largoInsertado > 0) currentInputConnection?.finishComposingText()
+        largoInsertado = 0
+        tramosVivos.clear()
     }
 
     private fun cerrarSesion() {
@@ -842,6 +1072,38 @@ class ServicioTecladoVoz : InputMethodService() {
 
     // --- Teclas del teclado ----------------------------------------------
 
+    /**
+     * Borrar mientras se mantiene pulsada la tecla (⌫ del modo dictado).
+     *
+     * Antes era un `setOnClickListener`, que borra un carácter y ya está: para
+     * borrar una palabra había que dar diez toques. Ahora se borra al APOYAR el
+     * dedo y, si no se suelta, se repite con el mismo ritmo que la ⌫ del teclado
+     * de letras (300 ms de espera y después cada 80 ms).
+     */
+    private fun prepararBorradoContinuo(tecla: View) {
+        val repetir = object : Runnable {
+            override fun run() {
+                borrarCaracter()
+                repeticionBorrado.postDelayed(this, INTERVALO_REPETICION_BORRADO)
+            }
+        }
+        tecla.setOnTouchListener { vista, evento ->
+            when (evento.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    vista.isPressed = true
+                    borrarCaracter()
+                    repeticionBorrado.postDelayed(repetir, ESPERA_REPETICION_BORRADO)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    vista.isPressed = false
+                    repeticionBorrado.removeCallbacks(repetir)
+                }
+            }
+            // El evento se consume: el toque ya está atendido aquí.
+            true
+        }
+    }
+
     private fun borrarCaracter() {
         marcarEdicion()
         val conexion = currentInputConnection ?: return
@@ -885,13 +1147,16 @@ class ServicioTecladoVoz : InputMethodService() {
 
     // --- Presentación ----------------------------------------------------
 
-    private fun mostrar(estado: Estado, mensaje: String? = null) {
+    private fun mostrar(estado: Estado, mensaje: String? = null, parcial: String? = null) {
         if (!::textoEstado.isInitialized) return
-        textoEstado.text = when (estado) {
-            Estado.LISTO -> getString(R.string.estado_listo)
-            Estado.GRABANDO -> getString(R.string.estado_grabando)
-            Estado.PROCESANDO -> getString(R.string.estado_procesando)
-            Estado.ERROR -> mensaje ?: getString(R.string.estado_error)
+        textoEstado.text = when {
+            // Lo que va entendiendo el reconocedor del celular: se enseña aquí y
+            // el texto definitivo se inserta al terminar.
+            parcial != null -> getString(R.string.estado_escuchando, parcial)
+            estado == Estado.LISTO -> getString(R.string.estado_listo)
+            estado == Estado.GRABANDO -> getString(R.string.estado_grabando)
+            estado == Estado.PROCESANDO -> getString(R.string.estado_procesando)
+            else -> mensaje ?: getString(R.string.estado_error)
         }
         textoEstado.setTextColor(
             getColor(if (estado == Estado.ERROR) R.color.texto_error else R.color.texto_estado)
@@ -933,6 +1198,16 @@ class ServicioTecladoVoz : InputMethodService() {
 
     companion object {
         private const val VIBRACION_CORTA = 25L
+
+        /** Cuánto se espera a que el puente confirme el inicio del dictado. */
+        private const val ESPERA_INICIO_MS = 15_000L
+
+        /** Cuánto se espera al texto final (el puente corta a los 120 s). */
+        private const val ESPERA_FINAL_MS = 120_000L
+
+        /** Borrado mantenido: espera inicial y ritmo de repetición (ms). */
+        private const val ESPERA_REPETICION_BORRADO = 300L
+        private const val INTERVALO_REPETICION_BORRADO = 80L
 
         /** Casillas de la barra de sugerencias. */
         private const val CASILLAS = 3

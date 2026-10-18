@@ -23,7 +23,10 @@ from utils_logging import imprimir, rotar_logs_al_iniciar
 from zmq_cliente import ClienteDictado, ErrorDictado, ServidorSinRespuesta
 
 dictado = ClienteDictado(
-    config.DIRECCION_ZMQ, config.TOKEN_ZMQ, config.TIMEOUT_TRANSCRIPCION
+    config.DIRECCION_ZMQ,
+    config.TOKEN_ZMQ,
+    config.TIMEOUT_TRANSCRIPCION,
+    config.MODELO_PARCIALES,
 )
 
 # Peticiones REST que pueden esperar en cola a que se libere el modelo.
