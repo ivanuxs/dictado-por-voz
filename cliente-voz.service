@@ -7,7 +7,7 @@ Wants=default.target sound.target network.target
 Type=simple
 # %h se expande al directorio home del usuario que ejecuta el servicio.
 # Antes de instalarlo, ajusta la carpeta del proyecto y la IP del servidor.
-ExecStart=/usr/bin/bash -c "exec \"%h/Documentos/dictado por voz/entorno_dictado/bin/python3\" \"%h/Documentos/dictado por voz/cliente_voz.py\" --servidor 127.0.0.1:5555"
+ExecStart=/usr/bin/bash -c "exec \"%h/Nextcloud/Proyectos/dictado por voz/entorno_dictado/bin/python3\" \"%h/Nextcloud/Proyectos/dictado por voz/cliente_voz.py\" --servidor 127.0.0.1:5555"
 Restart=on-failure
 RestartSec=5
 Environment=DISPLAY=:0

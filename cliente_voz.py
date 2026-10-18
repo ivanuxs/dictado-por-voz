@@ -31,6 +31,7 @@ from protocolo import (
     crear_dictado_stop, crear_ping,
     decodificar_texto,
 )
+from senal_cliente import enviar_toggle, obtener_ruta_pid as _ruta_pid_compartida
 from sonidos import reproducir_sonido
 from utils_logging import imprimir, rotar_logs_al_iniciar
 
@@ -65,6 +66,16 @@ RUTA_JSON = os.path.join(_directorio_base(), _nombre_config())
 RUTA_INDICADOR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "indicador_grabacion.py"
 )
+
+# --- Botón del auricular Bluetooth (AVRCP -> MPRIS) ---
+# El botón principal de un auricular Bluetooth no llega como tecla: viaja por
+# AVRCP y BlueZ se lo entrega al reproductor MPRIS publicado en la sesión (lo
+# hace `mpris-proxy`). Si no hay ninguno, el botón no hace nada. Por eso el
+# cliente publica un reproductor «Dictado por Voz» con mpris_dictado.py, que se
+# ejecuta con el Python DEL SISTEMA: necesita dbus-python, que no está en el
+# entorno virtual del cliente. Ver AGENTS.md.
+RUTA_MPRIS = os.path.join(_directorio_base(), "mpris_dictado.py")
+PYTHON_SISTEMA = "/usr/bin/python3"
 
 
 def _asegurar_config():
@@ -205,6 +216,75 @@ def cargar_tecla_escribir():
     return teclas_simples, teclas_combinadas
 
 
+def _resolver_dispositivo_entrada():
+    """Índice del micrófono a usar, o None para el predeterminado del sistema.
+
+    Se configura en comandos.json con `dispositivo_entrada`:
+      - vacío, "default" o "sistema": el que tenga el sistema por defecto;
+      - "interno": el micrófono incorporado de la computadora. **Nunca debe
+        usarse el micrófono de un auricular Bluetooth para dictar**: eso pone
+        el auricular en modo manos libres (perfil HSP/HFP) y su botón deja de
+        enviar el comando multimedia AVRCP (el auricular cree que está en una
+        llamada y envía "colgar"), así que el botón no puede activar el
+        dictado. Ver AGENTS.md;
+      - un número: el índice que asigna sounddevice;
+      - cualquier otro texto: se busca como parte del nombre del dispositivo.
+    """
+    try:
+        with open(RUTA_JSON, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        valor = config.get("dispositivo_entrada", "")
+    except Exception:
+        return None
+    if valor is None:
+        return None
+    valor = str(valor).strip()
+    if not valor or valor.lower() in ("default", "predeterminado", "sistema"):
+        return None
+
+    try:
+        dispositivos = list(enumerate(sd.query_devices()))
+    except Exception as e:
+        imprimir(f"[AUDIO] No se pudo listar los dispositivos: {e}")
+        return None
+    entradas = [
+        (i, d) for i, d in dispositivos if d.get("max_input_channels", 0) > 0
+    ]
+
+    if valor.isdigit():
+        indice = int(valor)
+        if any(i == indice for i, _ in entradas):
+            return indice
+        imprimir(
+            f"[AUDIO] El dispositivo de entrada {indice} no existe; "
+            "se usará el predeterminado."
+        )
+        return None
+
+    if valor.lower() in ("interno", "interna", "incorporado", "incorporada"):
+        for i, d in entradas:
+            nombre = d["name"].lower()
+            if "bluez" in nombre or "headset" in nombre or "auricular" in nombre:
+                continue
+            if "mic1" in nombre or "digital microphone" in nombre:
+                return i
+        imprimir(
+            "[AUDIO] No se encontró el micrófono interno; se usará el "
+            "predeterminado del sistema."
+        )
+        return None
+
+    busca = valor.lower()
+    for i, d in entradas:
+        if busca in d["name"].lower():
+            return i
+    imprimir(
+        f"[AUDIO] Ningún dispositivo de entrada coincide con '{valor}'; "
+        "se usará el predeterminado del sistema."
+    )
+    return None
+
+
 def cargar_modo_salida():
     """Cómo se entrega el texto dictado: 'portapapeles' o 'escribir'."""
     try:
@@ -232,67 +312,18 @@ def cargar_modo_activacion():
 
 
 def _obtener_ruta_pid():
-    directorio = os.environ.get("XDG_RUNTIME_DIR")
-    if not directorio or not os.path.isdir(directorio):
-        directorio = os.path.expanduser("~/.cache")
-        os.makedirs(directorio, exist_ok=True)
-    return os.path.join(directorio, "cliente_voz.pid")
+    """Ruta del archivo PID (compartida con senal_cliente.py)."""
+    return _ruta_pid_compartida()
 
 
 def _enviar_toggle_cli(modo="normal"):
-    """Envía la señal de toggle a la instancia de cliente_voz en ejecución."""
-    sig_nombre = "SIGUSR1" if modo == "normal" else "SIGUSR2"
-    sig_num = getattr(signal, sig_nombre, None)
-    if sig_num is None:
-        return False
+    """Envía la señal de toggle a la instancia de cliente_voz en ejecución.
 
-    # 1. Intentar primero con systemctl si el servicio de usuario está activo
-    try:
-        res = subprocess.run(
-            ["systemctl", "--user", "is-active", "--quiet", "cliente-voz"],
-            capture_output=True,
-        )
-        if res.returncode == 0:
-            subprocess.run(
-                ["systemctl", "--user", "kill", "-s", sig_nombre, "cliente-voz"],
-                check=True,
-            )
-            return True
-    except Exception:
-        pass
-
-    # 2. Intentar leyendo el archivo PID
-    ruta_pid = _obtener_ruta_pid()
-    if os.path.exists(ruta_pid):
-        try:
-            with open(ruta_pid, "r") as f:
-                pid = int(f.read().strip())
-            os.kill(pid, sig_num)
-            return True
-        except ProcessLookupError:
-            pass
-        except Exception:
-            pass
-
-    # 3. Fallback: buscar con pgrep
-    try:
-        res = subprocess.run(
-            ["pgrep", "-f", "python3.*cliente_voz.py"],
-            capture_output=True,
-            text=True,
-        )
-        pids = [int(p) for p in res.stdout.strip().split() if p and int(p) != os.getpid()]
-        if pids:
-            for pid in pids:
-                try:
-                    os.kill(pid, sig_num)
-                except Exception:
-                    pass
-            return True
-    except Exception:
-        pass
-
-    return False
+    La búsqueda del cliente vive en `senal_cliente.py` porque
+    `mpris_dictado.py` (botón del auricular Bluetooth) necesita exactamente la
+    misma lógica.
+    """
+    return enviar_toggle(modo)
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +671,10 @@ class ClienteVoz:
         self._tecla_suelta = True
         self._activo = True
 
+        # Proceso que publica el cliente como reproductor MPRIS (botón del
+        # auricular Bluetooth). Lo lanza y vigila la hebra _bucle_mpris.
+        self._mpris = None
+
         # Teclas
         self._teclas_simples, self._teclas_combinadas = cargar_tecla_activadora()
         self._teclas_escribir_simples, self._teclas_escribir_combinadas = (
@@ -670,6 +705,113 @@ class ClienteVoz:
         self._inicio_audio = time.time()        # Desde cuándo intentamos capturar
         self._ultimo_intento_audio = 0.0        # Último reintento de apertura
         self._ultimo_error_audio = ""           # Último error (para no repetirlo)
+
+    # --- Reproductor MPRIS (botón del auricular Bluetooth) ---
+
+    def _mpris_disponible(self):
+        """True si se puede publicar el reproductor MPRIS en esta máquina.
+
+        Se comprueba una sola vez al arrancar: si el Python del sistema no
+        tiene dbus-python, el botón del auricular no puede funcionar y no tiene
+        sentido estar reiniciando el proceso hijo cada pocos segundos.
+
+        El botón del auricular Bluetooth **viene apagado**: solo tiene sentido
+        con un auricular dedicado a la computadora. Con uno multipunto (también
+        emparejado al celular), el celular se queda con el botón en cuanto hay
+        una llamada o suena música allí, y no hay forma de recuperarlo desde la
+        PC. Se enciende con "boton_auricular_bluetooth": true en comandos.json
+        (o con DICTADO_MPRIS=1 en el entorno). Ver AGENTS.md.
+        """
+        if sys.platform == "win32":
+            return False
+
+        manual = os.environ.get("DICTADO_MPRIS", "").strip().lower()
+        if manual in ("0", "no", "false", "off"):
+            activado = False
+        elif manual in ("1", "si", "sí", "yes", "true", "on"):
+            activado = True
+        else:
+            try:
+                with open(RUTA_JSON, "r", encoding="utf-8") as f:
+                    activado = bool(
+                        json.load(f).get("boton_auricular_bluetooth", False)
+                    )
+            except Exception:
+                activado = False
+        if not activado:
+            imprimir(
+                "[MPRIS] Botón del auricular Bluetooth desactivado "
+                '(para activarlo: "boton_auricular_bluetooth": true en '
+                "comandos.json). El dictado sigue con la tecla activadora."
+            )
+            return False
+
+        if not os.path.exists(RUTA_MPRIS):
+            imprimir(
+                f"[MPRIS] No se encontró {RUTA_MPRIS}; botón del auricular desactivado."
+            )
+            return False
+        try:
+            prueba = subprocess.run(
+                [PYTHON_SISTEMA, "-c", "import dbus"],
+                capture_output=True,
+            )
+        except Exception as e:
+            imprimir(f"[MPRIS] No se pudo comprobar {PYTHON_SISTEMA}: {e}")
+            return False
+        if prueba.returncode != 0:
+            imprimir(
+                "[MPRIS] El Python del sistema no tiene dbus-python: el botón del "
+                "auricular Bluetooth queda desactivado (instala python3-dbus)."
+            )
+            return False
+        return True
+
+    def _bucle_mpris(self):
+        """Mantiene vivo el reproductor MPRIS que escucha el botón del auricular.
+
+        El proceso hijo se ejecuta con el Python del sistema y su salida se
+        reenvía al log del cliente. Si termina con error se reintenta cada
+        10 s; si termina bien (por ejemplo, porque ya había otro publicado) no
+        se reinicia, para no caer en un bucle.
+        """
+        entorno = dict(os.environ)
+        entorno["DICTADO_MPRIS_MODO"] = os.environ.get("DICTADO_MPRIS_MODO", "ambos")
+        entorno["DICTADO_MPRIS_DOBLE"] = os.environ.get("DICTADO_MPRIS_DOBLE", "si")
+
+        while self._activo:
+            try:
+                proceso = subprocess.Popen(
+                    [PYTHON_SISTEMA, RUTA_MPRIS],
+                    env=entorno,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            except Exception as e:
+                imprimir(f"[MPRIS] No se pudo iniciar el reproductor: {e}")
+                return
+            self._mpris = proceso
+            for linea in proceso.stdout:
+                linea = linea.rstrip()
+                if linea:
+                    imprimir(linea)
+                if not self._activo:
+                    break
+            codigo = proceso.wait()
+            self._mpris = None
+            if not self._activo:
+                return
+            if codigo == 0:
+                imprimir("[MPRIS] El reproductor terminó; no se reiniciará.")
+                return
+            imprimir(
+                f"[MPRIS] El reproductor terminó con código {codigo}; reintento en 10 s."
+            )
+            for _ in range(20):
+                if not self._activo:
+                    return
+                time.sleep(0.5)
 
     # --- Callback de audio ---
 
@@ -704,9 +846,15 @@ class ClienteVoz:
         primera apertura falla (o abre un dispositivo equivocado).
         """
         # Qué dispositivo de entrada se va a usar: útil para detectar un
-        # micrófono muteado, desconectado o equivocado (sobre todo en Windows).
+        # micrófono muteado, desconectado o equivocado (sobre todo en Windows)
+        # y para no capturar del auricular Bluetooth (su botón dejaría de
+        # enviar el comando AVRCP; ver _resolver_dispositivo_entrada).
+        indice_entrada = _resolver_dispositivo_entrada()
         try:
-            info_entrada = sd.query_devices(kind="input")
+            if indice_entrada is None:
+                info_entrada = sd.query_devices(kind="input")
+            else:
+                info_entrada = sd.query_devices(indice_entrada)
             imprimir(
                 f"[AUDIO] Dispositivo de entrada: {info_entrada['name']} "
                 f"(canales={info_entrada['max_input_channels']}, "
@@ -716,13 +864,16 @@ class ClienteVoz:
         except Exception as e:
             imprimir(f"[AUDIO] No se pudo consultar el dispositivo de entrada: {e}")
         try:
-            stream = sd.InputStream(
+            parametros = dict(
                 samplerate=FRECUENCIA,
                 channels=1,
                 callback=self._callback_audio,
                 dtype="int16",
                 blocksize=CHUNK_MUESTRAS,
             )
+            if indice_entrada is not None:
+                parametros["device"] = indice_entrada
+            stream = sd.InputStream(**parametros)
             stream.start()
             self._ultimo_chunk_audio = time.time()
             self._ultimo_error_audio = ""
@@ -1000,6 +1151,11 @@ class ClienteVoz:
         # Hebra que escribe en el cursor los textos dictados (en orden)
         threading.Thread(target=self._bucle_escritura, daemon=True).start()
 
+        # Reproductor MPRIS: es lo que permite que el botón del auricular
+        # Bluetooth active el dictado (el botón viaja por AVRCP, no como tecla).
+        if self._mpris_disponible():
+            threading.Thread(target=self._bucle_mpris, daemon=True).start()
+
         # Iniciar captura de audio (stream continuo para Vosk). Si falla, el
         # cliente sigue vivo (teclado, texto y comandos) y la reintenta en el
         # bucle principal hasta que el sistema de audio esté disponible.
@@ -1115,6 +1271,12 @@ class ClienteVoz:
         finally:
             self._activo = False
             self._limpiar_pid()
+            if self._mpris is not None:
+                try:
+                    self._mpris.terminate()
+                except Exception:
+                    pass
+                self._mpris = None
             if stream is not None:
                 try:
                     stream.stop()

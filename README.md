@@ -32,7 +32,7 @@ Herramienta de dictado por voz para Linux (con cliente para Windows) que **trans
 - **Dictado por voz**: el texto reconocido se inyecta en la ventana activa con el portapapeles (`pyperclip` + `pyautogui`).
 - **Comandos de voz**: abre y cierra aplicaciones, controla el volumen y la multimedia, captura la pantalla, bloquea la sesión y programa alarmas.
 - **Asistente de voz (TTS)**: responde en voz alta con `edge-tts` (hora, fecha, saludos y, opcionalmente, consultas a DeepSeek).
-- **Múltiples teclas activadoras**: botón del auricular (`media_play_pause`), `ctrl+space` y las que quieras añadir.
+- **Múltiples teclas activadoras**: `ctrl+space` y **el botón del auricular Bluetooth** (lleva por AVRCP: el cliente publica un reproductor MPRIS «Dictado por Voz» que lo recibe), más las que quieras añadir.
 - **Dos modos de activación**: *toggle* (un clic para empezar, otro para detener) o *mantener* (mantenés la tecla mientras hablas).
 - **Indicador visual**: una ventana flotante muestra cuando se está grabando.
 - **Modo escucha continua**: el servidor puede activar la grabación al detectar la palabra clave.
@@ -164,6 +164,8 @@ Edita `comandos.json`:
 {
   "tecla_activadora": ["media_play_pause", "ctrl+space"],
   "tecla_activadora_escribir": ["ctrl+alt+space"],
+  "dispositivo_entrada": "interno",
+  "boton_auricular_bluetooth": false,
   "modo_salida": "portapapeles",
   "modo_activacion": "toggle",
   "modo_escucha": true,
@@ -173,6 +175,17 @@ Edita `comandos.json`:
 ```
 
 - `tecla_activadora`: admite una lista; se pueden usar varias teclas a la vez.
+- `dispositivo_entrada`: de dónde se captura el audio. `"interno"` = micrófono de la
+  computadora (recomendado). **No uses el micrófono de un auricular Bluetooth para dictar**:
+  el auricular pasa a *modo manos libres* y su botón deja de enviar el comando multimedia
+  (envía «colgar»), así que el botón no puede activar el dictado. También acepta `""` o
+  `"default"` (el del sistema), un número (índice de `sounddevice`) o parte del nombre del
+  dispositivo.
+- `boton_auricular_bluetooth`: `true` publica un reproductor MPRIS «Dictado por Voz» para que
+  el botón del auricular active el dictado. Viene en `false` porque **solo conviene con un
+  auricular dedicado a la computadora**: con uno **multipunto** (también emparejado al celular),
+  el celular se queda con el botón en cuanto hay una llamada y desde la PC no se recupera. Con
+  `false`, el botón del auricular sigue controlando la música como siempre.
 - `modo_activacion`: `toggle` o `mantener`.
 - `modo_escucha`: `true` activa el modo de escucha continua.
 - `abre` / `cerrar`: nombre que dices → comando del sistema.
@@ -335,6 +348,8 @@ ZMQ local.
 ```
 dictado-por-voz/
 ├── cliente_voz.py              # Cliente ZMQ: micrófono, teclado, inyección de texto, comandos
+├── mpris_dictado.py            # Reproductor MPRIS «Dictado por Voz» (botón del auricular Bluetooth)
+├── senal_cliente.py            # Manda SIGUSR1/SIGUSR2 al cliente en ejecución (compartido)
 ├── cliente-voz.service         # Servicio systemd del cliente (plantilla)
 ├── comandos.json               # Comandos de voz y teclas activadoras
 ├── voz_asistente.py            # TTS (edge-tts) y consultas a DeepSeek
@@ -364,7 +379,8 @@ dictado-por-voz/
 | «Sin respuesta del servidor en 15 s» | Firewall o IP incorrecta | Abre el puerto `5555` o corrige la dirección |
 | La tecla no hace nada | Tecla ocupada por otra aplicación | Prueba `scratch/detectar_tecla.py` para ver qué tecla llega |
 | No se oye la respuesta de voz | Falta `ffplay` | `sudo apt install ffmpeg` |
-| El micrófono no capta | Dispositivo de entrada mal elegido | Revisa la configuración de audio del sistema |
+| El botón del auricular no dicta | La función está apagada (`boton_auricular_bluetooth: false`), o el dictado toma el micrófono del auricular (el auricular pasa a *modo manos libres* y su botón envía «colgar») | Ponte `"dispositivo_entrada": "interno"` y, si quieres el botón, `"boton_auricular_bluetooth": true` (solo con auricular dedicado; comprueba con `pactl list cards` que el perfil sea `a2dp-sink`) |
+| El micrófono no capta | Dispositivo de entrada mal elegido | Revisa `dispositivo_entrada` en `comandos.json` o la configuración de audio del sistema |
 | Error al ejecutar `pip` | Se movió el entorno virtual | Recrea el entorno: `python3 -m venv entorno_dictado` |
 
 ---

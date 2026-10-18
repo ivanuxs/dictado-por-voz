@@ -28,6 +28,8 @@ tocar el servidor de transcripción.
 ```
 dictado por voz/                    ← Carpeta del CLIENTE (PC usuario)
 ├── cliente_voz.py                  # Cliente ZMQ: micrófono, teclado, inyección texto, comandos, TTS
+├── mpris_dictado.py                # Reproductor MPRIS «Dictado por Voz» (botón del auricular Bluetooth)
+├── senal_cliente.py                # Manda SIGUSR1/SIGUSR2 al cliente en ejecución (compartido)
 ├── cliente-voz.service             # Servicio systemd para el cliente
 ├── comandos.json                   # Configuración de comandos de voz y teclas
 ├── voz_asistente.py                # TTS (edge-tts) y consultas DeepSeek
@@ -178,9 +180,54 @@ lo manda al puente y escribe el texto. **No hay lógica de transcripción aquí.
 - Configurable en `comandos.json` (`modo_activacion`).
 
 ### Teclas activadoras (múltiples simultáneas)
-- Botón del auricular (`media_play_pause`) y `ctrl+space` por defecto.
+- `ctrl+space` por defecto, y el **botón del auricular Bluetooth** cuando está en modo música
+  (ver la sección siguiente).
 - Soporta teclas multimedia, modificadores y combinaciones con `+`.
 - Configurable en `comandos.json` (`tecla_activadora`, admite lista).
+
+### Botón del auricular Bluetooth (AVRCP → MPRIS)
+
+Un auricular Bluetooth **no manda una tecla**: manda un comando **AVRCP** que BlueZ entrega
+al **reproductor MPRIS** publicado en la sesión (lo hace `mpris-proxy`, un servicio de
+usuario). Por eso `media_play_pause` en `comandos.json` **no puede funcionar con Bluetooth**:
+ese botón no aparece nunca en evdev ni en `pynput`.
+
+**La función viene APAGADA** (`"boton_auricular_bluetooth": false` en `comandos.json`).
+Solo tiene sentido con un auricular **dedicado a la computadora**: el del usuario es
+**multipunto** (también emparejado al celular) y el celular se queda con el botón en cuanto
+hay una llamada o música allí — el botón deja de llegar a la PC y **no se recupera desde el
+cliente** (hay que reconectar el auricular en la PC o hacer que la PC suene). Con la función
+apagada, BlueZ usa su respaldo de siempre: crea un **teclado virtual (uinput)** y emite
+`KEY_PLAYCD`/`KEY_PAUSECD`, así que el botón sigue controlando la música como antes.
+
+- `mpris_dictado.py` publica un reproductor MPRIS «Dictado por Voz» (solo si la función está
+  encendida); `cliente_voz.py` lo lanza y vigila como proceso hijo (`_bucle_mpris`). Un toque
+  = `SIGUSR1` (dictado normal) y dos toques (`Next`/`Previous`) = `SIGUSR2` (escribir donde
+  está el cursor).
+- Se ejecuta con el **Python del sistema** (`/usr/bin/python3`): necesita `dbus-python`, que
+  no está en `entorno_dictado/`. Modos con `DICTADO_MPRIS_MODO` (`ambos` por defecto, o
+  `sin_interferir`) y `DICTADO_MPRIS_DOBLE=no` para ignorar el botón doble.
+- Los procesos del cliente viven en el **mismo grupo de procesos**: un
+  `systemctl --user kill -s SIGUSR1 cliente-voz` **sin `--kill-who=main`** mataría también a
+  `mpris_dictado.py` (le pasaba: se suicidaba con cada pulsación). Por eso `senal_cliente.py`
+  y los atajos de GNOME usan `--kill-who=main`, y el reproductor ignora SIGUSR1/SIGUSR2.
+
+⚠️ **Trampa gorda, costó una sesión entera: si el dictado captura del micrófono del
+auricular, el botón deja de servir.** Capturar del micro del auricular obliga a PipeWire a
+ponerlo en **modo manos libres** (`headset-head-unit`, HFP/SCO); el auricular entonces *cree
+que está en una llamada* y su botón envía **`AT+CHUP` («colgar»)** en lugar del comando
+multimedia. BlueZ responde `ERROR` y no ocurre nada: comprobado con `sudo btmon`, 3
+pulsaciones = 3 `AT+CHUP` y cero AVRCP. Para que el botón funcione el auricular tiene que
+estar en **`a2dp-sink`** (modo música), y eso exige **no usar su micrófono**
+(`pactl list cards | grep 'Perfil activo'`).
+
+- Por eso existe `dispositivo_entrada` en `comandos.json`:
+  - `"interno"` (por defecto): micrófono incorporado de la computadora;
+  - `""` / `"default"`: el predeterminado del sistema (⚠️ si es el del auricular, el botón
+    volverá a ser «colgar»);
+  - un número (índice de `sounddevice`) o un trozo del nombre del dispositivo.
+- Dato del equipo: el **jack con cable** de este Dell (`sof-hda-dsp Headphone Mic`) no expone
+  teclas (`key=0`, solo `EV_SW`), así que un auricular con cable tampoco daría botón.
 
 ### Logging
 - Toda la salida usa `imprimir()` de `utils_logging.py`.
@@ -196,6 +243,9 @@ lo manda al puente y escribe el texto. **No hay lógica de transcripción aquí.
 - `edge-tts` (texto a voz, en `voz_asistente.py`)
 - `requests` (consultas a DeepSeek, en `voz_asistente.py`)
 - `openai-whisper`, `torch`, `scipy` (transcripción — solo en el servidor)
+- `python3-dbus` (paquete del **sistema**, no del entorno virtual): lo necesita
+  `mpris_dictado.py` para el botón del auricular Bluetooth. Si falta, el cliente funciona
+  igual: solo se pierde ese botón de auricular (queda avisado en el log).
 
 Instaladas en el entorno virtual `entorno_dictado/`.
 

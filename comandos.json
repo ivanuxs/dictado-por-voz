@@ -1,6 +1,8 @@
 {
   "tecla_activadora": ["media_play_pause", "ctrl+space"],
   "tecla_activadora_escribir": ["ctrl+alt+space"],
+  "dispositivo_entrada": "interno",
+  "boton_auricular_bluetooth": false,
   "modo_salida": "portapapeles",
   "modo_activacion": "toggle",
   "modo_escucha": true,
