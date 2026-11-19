@@ -1,29 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:app="http://schemas.android.com/apk/res-auto">
     <!-- Tema oscuro a propósito: el teclado y esta pantalla usan fondo oscuro.
          Antes era DayNight y, en un celular en modo claro, el texto salía
-         oscuro sobre oscuro: no se leía nada. -->
+         oscuro sobre oscuro: no se leía nada.
+
+         Rediseño del 2026-11-15: el tema pasa a ser la ÚNICA fuente de la
+         tipografía, los radios y los campos. Así los formularios se ven igual
+         en Ajustes y en Cuenta sin repetir atributos en cada EditText. -->
     <style name="TemaDictado" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/fondo_teclado</item>
-        <!-- La paleta del teclado también manda en la pantalla de ajustes: los
-             interruptores, el cursor y los botones salen en el mismo verde. -->
+        <!-- La paleta del teclado también manda en las pantallas: los
+             interruptores, el cursor y los botones salen en el mismo verde-teal. -->
         <item name="colorPrimary">@color/acento</item>
-        <item name="colorOnPrimary">@color/fondo_teclado</item>
+        <item name="colorOnPrimary">@color/texto_sobre_acento</item>
+        <item name="colorPrimaryContainer">@color/acento_tenue</item>
+        <item name="colorOnPrimaryContainer">@color/acento</item>
         <item name="colorSecondary">@color/acento</item>
+        <item name="colorOnSecondary">@color/texto_sobre_acento</item>
         <item name="colorSurface">@color/superficie</item>
+        <item name="colorSurfaceVariant">@color/fondo_boton</item>
         <item name="colorOnSurface">@color/texto_tecla</item>
         <item name="colorOnSurfaceVariant">@color/texto_tecla_secundario</item>
+        <item name="colorOutline">@color/campo_borde</item>
         <item name="android:colorAccent">@color/acento</item>
+        <item name="android:textColorHighlight">#594FD1C5</item>
+        <item name="android:statusBarColor">@color/fondo_teclado</item>
+        <item name="android:navigationBarColor">@color/fondo_teclado</item>
+        <!-- Campos de texto: fondo relleno con esquinas de 12dp. -->
+        <item name="editTextStyle">@style/CampoTexto</item>
+        <!-- Los botones, por defecto, son secundarios (contorno tenue): así el
+             único botón relleno de cada pantalla es la acción principal. -->
+        <item name="materialButtonStyle">@style/BotonSecundario</item>
     </style>
 
-    <style name="BotonPrincipal">
-        <item name="android:backgroundTint">@color/acento</item>
-        <item name="android:textColor">@color/fondo_teclado</item>
-    </style>
-
-    <style name="BotonSecundario">
-        <item name="android:backgroundTint">@color/fondo_boton</item>
+    <!-- Campo de texto: se aplica desde el tema (`editTextStyle`), así que aquí
+         solo van atributos del propio campo. Los layout_width/layout_height NO
+         llegan por esta vía (el inflador los lee del layout) y van en el XML. -->
+    <style name="CampoTexto" parent="Widget.AppCompat.EditText">
+        <item name="android:minHeight">44dp</item>
+        <item name="android:background">@drawable/fondo_campo</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:textSize">14sp</item>
         <item name="android:textColor">@color/texto_tecla</item>
+        <item name="android:textColorHint">@color/texto_tecla_secundario</item>
+    </style>
+
+    <style name="BotonPrincipal" parent="Widget.Material3.Button">
+        <item name="backgroundTint">@color/acento</item>
+        <item name="android:textColor">@color/texto_sobre_acento</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="android:minHeight">46dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="BotonSecundario" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="strokeColor">@color/campo_borde</item>
+        <item name="android:textColor">@color/texto_tecla</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="android:minHeight">44dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="BotonTenue" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">@color/acento</item>
+        <item name="cornerRadius">10dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">13.5sp</item>
+        <item name="android:letterSpacing">0</item>
     </style>
 
     <style name="BotonTeclado">
@@ -39,11 +88,51 @@
         <item name="android:tint">@color/texto_tecla_secundario</item>
     </style>
 
+    <!-- Título de pantalla: 21sp, peso alto y tracking cerrado. -->
+    <style name="TituloPantalla">
+        <item name="android:textSize">21sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">-0.01</item>
+        <item name="android:textColor">@color/texto_tecla</item>
+    </style>
+
+    <style name="TextoSecundario">
+        <item name="android:textSize">12.5sp</item>
+        <item name="android:textColor">@color/texto_tecla_secundario</item>
+    </style>
+
+    <!-- Ayuda larga: más pequeña y con interlineado suelto. -->
+    <style name="TextoAyuda">
+        <item name="android:textSize">11.5sp</item>
+        <item name="android:lineSpacingMultiplier">1.25</item>
+        <item name="android:textColor">@color/texto_tecla_secundario</item>
+    </style>
+
+    <!-- Rótulo de sección dentro de una tarjeta: mayúsculas y tracking abierto. -->
+    <style name="RotuloSeccion">
+        <item name="android:textSize">10.5sp</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:letterSpacing">0.1</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/texto_tecla_secundario</item>
+    </style>
+
+    <!-- Tarjeta: agrupa los controles de un mismo tema (cuenta, motor, teclado…).
+         OJO: layout_width y layout_height NO pueden venir de aquí —el inflador
+         los exige en el propio layout y la app se cae («You must supply a
+         layout_width attribute»)—; en el XML van explícitos. -->
+    <style name="Tarjeta">
+        <item name="android:orientation">vertical</item>
+        <item name="android:background">@drawable/fondo_tarjeta</item>
+        <item name="android:padding">14dp</item>
+        <item name="android:layout_marginTop">12dp</item>
+    </style>
+
     <style name="EtiquetaAjuste">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">16dp</item>
-        <item name="android:textSize">14sp</item>
-        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:textSize">12.5sp</item>
+        <item name="android:textColor">@color/texto_tecla_secundario</item>
     </style>
 </resources>

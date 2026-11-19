@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Fondo del icono adaptativo: degradado de verde profundo (arriba a la
-     izquierda) al casi negro del teclado (abajo a la derecha). Antes era un
-     cuadrado verde plano. -->
+<!-- Fondo del icono adaptativo: degradado de verde-teal profundo (arriba a la
+     izquierda) al casi negro del teclado (abajo a la derecha). Rediseño del
+     2026-11-15: el verde bosque plano pasó a este tono, el mismo del acento
+     new de la app, para que el icono y el teclado se lean como un conjunto. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <gradient
         android:angle="315"
-        android:endColor="#FF0E1113"
-        android:startColor="#FF1F5C3E"
+        android:endColor="#FF0A0D0F"
+        android:startColor="#FF15393C"
         android:type="linear" />
 </shape>

@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Sin separación entre teclas: el fondo de cada tecla llena toda su celda,
-         como en Gboard. El área táctil ya era la celda completa; ahora el dibujo
-         también, así que no se pierde ni un píxel visible entre letras. -->
+    <!-- Sin separación HORIZONTAL entre teclas: el fondo de cada tecla llena toda su
+         celda, como en Gboard. El área táctil ya era la celda completa; ahora el
+         dibujo también, así que no se pierde ni un píxel visible entre letras.
+         (El hueco vertical entre filas sí existe y va en `TecladoLetras.HUECO_DP`:
+         está para que un toque alto no escriba la letra de la fila de encima.) -->
 
-    <!-- Alto de la franja de sugerencias. -->
-    <dimen name="alto_sugerencias">38dp</dimen>
+    <!-- Alto de la franja de sugerencias. Bajó de 38 a 32 dp el 2026-10-31: con
+         la banda del micrófono, el teclado no cabía en la ventana del IME
+         (317 dp en el Xiaomi) y el espacio y el ↵ se salían por abajo. -->
+    <dimen name="alto_sugerencias">32dp</dimen>
+
+    <!-- Ancho del botón «＋ / ✓» del final de la barra. Estrecho a propósito:
+         las sugerencias se quedan con el resto del ancho. -->
+    <dimen name="ancho_accion">44dp</dimen>
 </resources>

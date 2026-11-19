@@ -1,256 +1,511 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Pantalla de ajustes.
+  Pantalla de ajustes (rediseño del 2026-11-15).
 
   Los colores van explícitos a propósito: el tema es oscuro y no queremos que
   el texto dependa del modo claro/oscuro del celular (fue el bug de "texto del
   mismo color que el fondo").
--->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
 
+  Los controles se agrupan en TARJETAS por tema (cuenta, motor, conexión,
+  teclado, diccionario, portapapeles y sistema) y Guardar/Probar viven en una
+  barra fija abajo: antes había una sola lista de 25 controles y había que
+  bajar hasta el final para guardar.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/fondo_teclado"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="16dp">
+
+            <!-- Cabecera: el monograma (el mismo del icono) y el nombre. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:background="@drawable/fondo_logo"
+                    android:gravity="center"
+                    android:text="@string/app_monograma"
+                    android:textColor="@color/texto_sobre_acento"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/TituloPantalla"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/ajustes_encabezado" />
+
+                    <TextView
+                        style="@style/TextoSecundario"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/ajustes_subtitulo" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                style="@style/TextoAyuda"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="@string/ajustes_ayuda" />
+
+            <!-- ── Cuenta y plan ─────────────────────────────────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_cuenta" />
+
+                <!-- Entrar, crear cuenta y ver el plan (pantalla aparte). -->
+                <Button
+                    android:id="@+id/boton_cuenta"
+                    style="@style/BotonTenue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_cuenta" />
+            </LinearLayout>
+
+            <!-- ── Conexión con el servidor ──────────────────────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_seccion_conexion" />
+
+                <TextView
+                    style="@style/EtiquetaAjuste"
+                    android:text="@string/ajustes_url" />
+
+                <EditText
+                    android:id="@+id/campo_url"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/ajustes_url_ayuda"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri" />
+
+                <TextView
+                    style="@style/EtiquetaAjuste"
+                    android:text="@string/ajustes_token" />
+
+                <EditText
+                    android:id="@+id/campo_token"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="textVisiblePassword" />
+
+                <TextView
+                    style="@style/EtiquetaAjuste"
+                    android:text="@string/ajustes_clave" />
+
+                <EditText
+                    android:id="@+id/campo_clave"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/ajustes_clave_ayuda"
+                    android:importantForAutofill="no"
+                    android:inputType="textVisiblePassword" />
+
+            </LinearLayout>
+
+            <!-- ── Motor del dictado ─────────────────────────────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_seccion_motor" />
+
+                <!-- El del celular (gratis) o el servidor (solo con dirección y
+                     token); sin plan de pago los dos interruptores van apagados. -->
+                <Switch
+                    android:id="@+id/campo_servidor"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_usar_servidor"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <TextView
+                    style="@style/TextoAyuda"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/ajustes_usar_servidor_ayuda" />
+
+                <Switch
+                    android:id="@+id/campo_vivo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/ajustes_vivo"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <TextView
+                    style="@style/TextoAyuda"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/ajustes_vivo_ayuda" />
+
+                <TextView
+                    style="@style/EtiquetaAjuste"
+                    android:text="@string/ajustes_espera" />
+
+                <EditText
+                    android:id="@+id/campo_espera"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="number" />
+
+            </LinearLayout>
+
+            <!-- ── Teclado ───────────────────────────────────────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_teclado" />
+
+                <TextView
+                    style="@style/EtiquetaAjuste"
+                    android:text="@string/ajustes_idioma_traduccion" />
+
+                <RadioGroup
+                    android:id="@+id/grupo_idioma_traduccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/campo_idioma_en"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp"
+                        android:text="@string/idioma_en_may"
+                        android:textColor="?attr/colorOnSurface" />
+
+                    <RadioButton
+                        android:id="@+id/campo_idioma_pt"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp"
+                        android:text="@string/idioma_pt_may"
+                        android:textColor="?attr/colorOnSurface" />
+
+                    <RadioButton
+                        android:id="@+id/campo_idioma_it"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp"
+                        android:text="@string/idioma_it_may"
+                        android:textColor="?attr/colorOnSurface" />
+
+                    <RadioButton
+                        android:id="@+id/campo_idioma_zh"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp"
+                        android:text="@string/idioma_zh_may"
+                        android:textColor="?attr/colorOnSurface" />
+
+                    <RadioButton
+                        android:id="@+id/campo_idioma_es"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="40dp"
+                        android:text="@string/idioma_es_may"
+                        android:textColor="?attr/colorOnSurface" />
+                </RadioGroup>
+
+                <TextView
+                    style="@style/TextoAyuda"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/ajustes_idioma_ayuda" />
+
+                <Switch
+                    android:id="@+id/campo_numeros"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/ajustes_fila_numeros"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <Switch
+                    android:id="@+id/campo_vibrar"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_vibrar"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <!-- Tamaño de las teclas: el texto lo pone AjustesActivity
+                     (mostrarTamano), porque lleva el número actual. -->
+                <TextView
+                    android:id="@+id/etiqueta_tamano"
+                    style="@style/EtiquetaAjuste"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <SeekBar
+                    android:id="@+id/campo_tamano"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <!-- ── Diccionario y sugerencias ─────────────────────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_seccion_diccionario" />
+
+                <Switch
+                    android:id="@+id/campo_sugerencias"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_sugerencias"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <Switch
+                    android:id="@+id/campo_autocorreccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_autocorreccion"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <TextView
+                    style="@style/EtiquetaAjuste"
+                    android:text="@string/ajustes_perfil" />
+
+                <EditText
+                    android:id="@+id/campo_perfil"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:importantForAutofill="no"
+                    android:inputType="textNoSuggestions" />
+
+                <TextView
+                    style="@style/TextoAyuda"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/ajustes_perfil_ayuda" />
+
+                <Button
+                    android:id="@+id/boton_mis_palabras"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/ajustes_mis_palabras" />
+
+                <TextView
+                    style="@style/TextoAyuda"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/ajustes_mis_palabras_ayuda" />
+
+                <Button
+                    android:id="@+id/boton_borrar_diccionario"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/ajustes_borrar_diccionario" />
+
+            </LinearLayout>
+
+            <!-- ── Portapapeles ──────────────────────────────────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_seccion_portapapeles" />
+
+                <Switch
+                    android:id="@+id/campo_portapapeles"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_portapapeles"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <Switch
+                    android:id="@+id/campo_historial"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_historial"
+                    android:textColor="?attr/colorOnSurface" />
+
+                <TextView
+                    style="@style/TextoAyuda"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/ajustes_historial_ayuda" />
+
+                <Button
+                    android:id="@+id/boton_borrar_historial"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_borrar_historial" />
+            </LinearLayout>
+
+            <!-- ── Sistema: activar el teclado y volver a él ──────────── -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ajustes_seccion_sistema" />
+
+                <Button
+                    android:id="@+id/boton_abrir_teclados"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_abrir_teclados" />
+
+                <Button
+                    android:id="@+id/boton_elegir_teclado"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_elegir_teclado" />
+
+                <Button
+                    android:id="@+id/boton_volver"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_volver" />
+
+                <Button
+                    android:id="@+id/boton_teja"
+                    style="@style/BotonSecundario"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/ajustes_teja" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Barra fija: el mensaje de resultado y las dos acciones de siempre,
+         siempre a la vista. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:background="@color/fondo_teclado"
         android:orientation="vertical"
-        android:padding="20dp">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_encabezado"
-            android:textColor="@color/texto_tecla"
-            android:textSize="22sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="12dp"
-            android:text="@string/ajustes_subtitulo"
-            android:textColor="@color/texto_tecla_secundario"
-            android:textSize="13sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_ayuda"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="12sp" />
-
-        <TextView
-            style="@style/EtiquetaAjuste"
-            android:text="@string/ajustes_url" />
-
-        <EditText
-            android:id="@+id/campo_url"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/ajustes_url_ayuda"
-            android:importantForAutofill="no"
-            android:inputType="textUri"
-            android:textColor="?attr/colorOnSurface"
-            android:textColorHint="?attr/colorOnSurfaceVariant" />
-
-        <TextView
-            style="@style/EtiquetaAjuste"
-            android:text="@string/ajustes_token" />
-
-        <EditText
-            android:id="@+id/campo_token"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:importantForAutofill="no"
-            android:inputType="textVisiblePassword"
-            android:textColor="?attr/colorOnSurface"
-            android:textColorHint="?attr/colorOnSurfaceVariant" />
-
-        <TextView
-            style="@style/EtiquetaAjuste"
-            android:text="@string/ajustes_clave" />
-
-        <EditText
-            android:id="@+id/campo_clave"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="@string/ajustes_clave_ayuda"
-            android:importantForAutofill="no"
-            android:inputType="textVisiblePassword"
-            android:textColor="?attr/colorOnSurface"
-            android:textColorHint="?attr/colorOnSurfaceVariant" />
-
-        <!-- Motor del dictado: el del celular (gratis) o nuestro servidor
-             (solo con dirección y token). -->
-        <Switch
-            android:id="@+id/campo_servidor"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/ajustes_usar_servidor"
-            android:textColor="?attr/colorOnSurface" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_usar_servidor_ayuda"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="12sp" />
-
-        <Switch
-            android:id="@+id/campo_vivo"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/ajustes_vivo"
-            android:textColor="?attr/colorOnSurface" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_vivo_ayuda"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="12sp" />
-
-        <TextView
-            style="@style/EtiquetaAjuste"
-            android:text="@string/ajustes_espera" />
-
-        <EditText
-            android:id="@+id/campo_espera"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:importantForAutofill="no"
-            android:inputType="number"
-            android:textColor="?attr/colorOnSurface"
-            android:textColorHint="?attr/colorOnSurfaceVariant" />
-
-        <TextView
-            style="@style/EtiquetaAjuste"
-            android:text="@string/ajustes_teclado" />
-
-        <Switch
-            android:id="@+id/campo_numeros"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_fila_numeros"
-            android:textColor="?attr/colorOnSurface" />
-
-        <Switch
-            android:id="@+id/campo_vibrar"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_vibrar"
-            android:textColor="?attr/colorOnSurface" />
-
-        <Switch
-            android:id="@+id/campo_sugerencias"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_sugerencias"
-            android:textColor="?attr/colorOnSurface" />
-
-        <Switch
-            android:id="@+id/campo_autocorreccion"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_autocorreccion"
-            android:textColor="?attr/colorOnSurface" />
-
-        <Switch
-            android:id="@+id/campo_portapapeles"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_portapapeles"
-            android:textColor="?attr/colorOnSurface" />
-
-        <Switch
-            android:id="@+id/campo_historial"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_historial"
-            android:textColor="?attr/colorOnSurface" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_historial_ayuda"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="12sp" />
-
-        <Button
-            android:id="@+id/boton_borrar_historial"
-            style="@style/BotonSecundario"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/ajustes_borrar_historial" />
-
-        <TextView
-            android:id="@+id/etiqueta_tamano"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="14sp" />
-
-        <SeekBar
-            android:id="@+id/campo_tamano"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <Button
-            android:id="@+id/boton_guardar"
-            style="@style/BotonPrincipal"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/ajustes_guardar" />
-
-        <Button
-            android:id="@+id/boton_probar"
-            style="@style/BotonSecundario"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_probar" />
-
-        <Button
-            android:id="@+id/boton_abrir_teclados"
-            style="@style/BotonSecundario"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/ajustes_abrir_teclados" />
-
-        <Button
-            android:id="@+id/boton_elegir_teclado"
-            style="@style/BotonSecundario"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_elegir_teclado" />
-
-        <Button
-            android:id="@+id/boton_volver"
-            style="@style/BotonSecundario"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/ajustes_volver" />
-
-        <Button
-            android:id="@+id/boton_teja"
-            style="@style/BotonSecundario"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/ajustes_teja" />
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp">
 
         <TextView
             android:id="@+id/texto_resultado"
+            style="@style/TextoSecundario"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="14sp" />
+            android:layout_marginBottom="8dp"
+            android:textColor="@color/acento" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/boton_probar"
+                style="@style/BotonSecundario"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/ajustes_probar" />
+
+            <Button
+                android:id="@+id/boton_guardar"
+                style="@style/BotonPrincipal"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:text="@string/ajustes_guardar" />
+        </LinearLayout>
     </LinearLayout>
-</ScrollView>
+</LinearLayout>

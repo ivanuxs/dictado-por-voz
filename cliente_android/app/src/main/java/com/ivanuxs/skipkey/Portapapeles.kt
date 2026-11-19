@@ -1,4 +1,4 @@
-package com.ivanuxs.dictadoime
+package com.ivanuxs.skipkey
 
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences

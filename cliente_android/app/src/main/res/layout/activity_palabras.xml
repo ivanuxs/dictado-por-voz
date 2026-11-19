@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  «Mis palabras» (2026-11-18): lo que el diccionario ha guardado del usuario.
+
+  Dos tarjetas con lo mismo que antes solo existía escondido: las palabras
+  propias que NO vienen en la lista base y las correcciones aprendidas del
+  dictado. Las filas se construyen en código (`PalabrasActivity`), porque son
+  textos y usos que cambian; aquí solo está el esqueleto.
+
+  Los layout_width/layout_height van SIEMPRE en el XML: el inflador no los
+  recibe desde el estilo `Tarjeta` y la app se caería al inflar.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/fondo_teclado"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="16dp">
+
+            <TextView
+                style="@style/TituloPantalla"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/palabras_titulo" />
+
+            <TextView
+                android:id="@+id/texto_perfil"
+                style="@style/TextoSecundario"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp" />
+
+            <!-- Palabras propias (las que no vienen en la lista base). -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/palabras_seccion_palabras" />
+
+                <LinearLayout
+                    android:id="@+id/lista_palabras"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="vertical" />
+            </LinearLayout>
+
+            <!-- Correcciones del dictado: lo que dijo el motor -> lo que querías. -->
+            <LinearLayout
+                style="@style/Tarjeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    style="@style/RotuloSeccion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/palabras_seccion_correcciones" />
+
+                <LinearLayout
+                    android:id="@+id/lista_correcciones"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <Button
+        android:id="@+id/boton_volver"
+        style="@style/BotonSecundario"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="12dp"
+        android:text="@string/palabras_volver" />
+</LinearLayout>

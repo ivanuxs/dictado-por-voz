@@ -1,4 +1,4 @@
-package com.ivanuxs.dictadoime
+package com.ivanuxs.skipkey
 
 import android.content.Intent
 import android.graphics.drawable.Icon

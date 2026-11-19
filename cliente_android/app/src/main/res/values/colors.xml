@@ -1,43 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Paleta oscura del teclado.
+    <!-- Paleta oscura del teclado (rediseño del 2026-11-15).
          Tres niveles de superficie, no dos: fondo (lo más profundo), teclas de
-         letras y teclas de función (más oscuras que las letras). Esa diferencia
-         es la que hace que el teclado se lea como uno profesional sin dejar de
-         ser plano (las teclas siguen pegadas y sin esquinas redondeadas). -->
-    <color name="fondo_teclado">#FF121417</color>
-    <color name="superficie">#FF1A1D21</color>
-    <color name="fondo_boton">#FF272B30</color>
-    <color name="fondo_boton_pulsado">#FF3A4149</color>
-    <color name="fondo_especial">#FF1C2024</color>
-    <color name="fondo_especial_pulsado">#FF2E353B</color>
-    <!-- ⇧/⇪ encendido: verde tenue con contorno de acento. -->
-    <color name="tecla_activa">#FF1F4634</color>
+         letras y teclas de función. Los tonos son más profundos que antes
+         (#121417 → #0B0D0F) para que el acento verde-teal se lea como LUZ y no
+         como otro gris. Las teclas siguen planas y pegadas: el aire sale de la
+         banda, la barra de sugerencias y las pantallas, no de las letras. -->
+    <color name="fondo_teclado">#FF0B0D0F</color>
+    <color name="superficie">#FF12161A</color>
+    <color name="fondo_boton">#FF1A2026</color>
+    <color name="fondo_boton_pulsado">#FF2F3941</color>
+    <color name="fondo_especial">#FF242C33</color>
+    <color name="fondo_especial_pulsado">#FF39434B</color>
+    <!-- ⇧/⇪ encendido: verde-teal tenue. -->
+    <color name="tecla_activa">#FF1B3B39</color>
 
-    <!-- Rótulos: claro en las letras, atenuado en las teclas de función. -->
-    <color name="texto_tecla">#FFE9EDF1</color>
-    <color name="texto_tecla_secundario">#FF9AA5AF</color>
-    <color name="texto_estado">#FF9AA5AF</color>
-    <color name="texto_error">#FFE28A8A</color>
+    <!-- Rótulos: claro en las letras, atenuado en las teclas de función.
+         El secundario sube de contraste (#9AA5AF → #93A1A9 sobre fondos más
+         oscuros: 6.5:1) para que las ayudas se lean sin forzar la vista. -->
+    <color name="texto_tecla">#FFE9EFF2</color>
+    <color name="texto_tecla_secundario">#FF93A1A9</color>
+    <color name="texto_estado">#FF93A1A9</color>
+    <color name="texto_error">#FFFF8A7A</color>
 
-    <!-- Verde de acento: ⇧ activo, ↵, punto de estado y micrófono listo. -->
-    <color name="acento">#FF3DD68C</color>
+    <!-- Acento verde-teal: ⇧ activo, ↵, punto de estado y micrófono listo.
+         El tono tenue es su versión de relleno (fondo del ↵ y del micrófono) y
+         `texto_sobre_acento` es el que garantiza contraste encima del acento. -->
+    <color name="acento">#FF4FD1C5</color>
+    <color name="acento_tenue">#FF1B3B39</color>
+    <color name="texto_sobre_acento">#FF06201E</color>
     <color name="icono">#FFFFFFFF</color>
 
-    <!-- Micrófono: verde profundo con borde de acento en reposo; rojo y ámbar
-         sólidos mientras graba o transcribe. -->
-    <color name="micro_listo">#FF1F5C3E</color>
-    <color name="micro_grabando">#FFE0483A</color>
-    <color name="micro_procesando">#FFF0A23C</color>
-    <color name="micro_error">#FF3A4149</color>
+    <!-- Micrófono: verde-teal profundo con borde de acento en reposo; rojo y
+         ámbar sólidos mientras graba o transcribe. -->
+    <color name="micro_listo">#FF1B3B39</color>
+    <color name="micro_grabando">#FFFF6B5A</color>
+    <color name="micro_procesando">#FFF5A524</color>
+    <color name="micro_error">#FF2F3941</color>
 
     <!-- Contorno de la barra espaciadora (la única tecla con borde). -->
     <color name="borde_espacio">#26FFFFFF</color>
 
     <!-- Franja de sugerencias y portapapeles. -->
-    <color name="fondo_sugerencias">#FF16191D</color>
-    <color name="fondo_sugerencia_pulsada">#FF232A31</color>
-    <color name="portapapeles_fondo">#FF1A1E22</color>
+    <color name="fondo_sugerencias">#FF101418</color>
+    <color name="fondo_sugerencia_pulsada">#FF242C33</color>
+    <color name="portapapeles_fondo">#FF151A1F</color>
     <color name="portapapeles_borde">#1FFFFFFF</color>
     <color name="separador">#14FFFFFF</color>
+
+    <!-- Pantallas de la app (ajustes y cuenta): tarjetas y campos. -->
+    <color name="tarjeta">#FF151A20</color>
+    <color name="tarjeta_borde">#14FFFFFF</color>
+    <color name="campo_fondo">#FF0F1418</color>
+    <color name="campo_borde">#1FFFFFFF</color>
 </resources>

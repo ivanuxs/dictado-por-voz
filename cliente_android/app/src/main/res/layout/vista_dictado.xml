@@ -1,39 +1,107 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modo dictado: el micrófono grande y las teclas imprescindibles. -->
+<!--
+  Banda de dictado: va SIEMPRE arriba del teclado de letras, en la misma
+  pantalla.
+
+  Antes esto era una vista aparte que SUSTITUÍA a las letras (había que ir y
+  volver con la tecla ⌨). Desde el 2026-10-31 conviven: a la izquierda la línea
+  de estado —con los parciales del dictado— y a la derecha el micrófono grande.
+  El ⌫ y el ↵ ya no están aquí: son teclas del teclado de letras.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
     android:orientation="horizontal">
 
-    <ImageButton
-        android:id="@+id/boton_teclado"
-        style="@style/BotonTeclado"
-        android:contentDescription="@string/accion_teclado"
-        android:src="@drawable/ic_teclado" />
+    <!-- Línea de estado: punto de color (verde listo, rojo grabando, ámbar
+         transcribiendo, gris error) y el texto a la izquierda. -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp">
 
+        <View
+            android:id="@+id/punto_estado"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/punto_estado"
+            android:backgroundTint="@color/acento" />
+
+        <TextView
+            android:id="@+id/texto_estado"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:text="@string/estado_listo"
+            android:textColor="@color/texto_estado"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Ajustes: abre la pantalla de la app (ajustes del dictado) sin tener que
+         salir a buscarla en el cajón de aplicaciones. -->
+    <ImageButton
+        android:id="@+id/boton_ajustes"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="2dp"
+        android:background="@drawable/fondo_accion"
+        android:contentDescription="@string/accion_ajustes"
+        android:padding="5dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_ajustes" />
+
+    <!-- Traducir: un toque traduce el texto del campo al idioma elegido;
+         mantenerlo pulsado cambia de idioma (en → pt → it → zh → es). -->
+    <ImageButton
+        android:id="@+id/boton_traducir"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="2dp"
+        android:background="@drawable/fondo_accion"
+        android:contentDescription="@string/accion_traducir"
+        android:padding="5dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_traducir" />
+
+    <!-- Portapapeles: un botón suelto en la MISMA banda del micrófono. Antes era
+         una franja propia de ~50 dp encima del teclado, y ese alto es justo lo
+         que le faltaba a la fila de abajo para caber entera. Un toque pega lo
+         último copiado; mantenerlo pulsado abre el historial. -->
+    <ImageButton
+        android:id="@+id/boton_portapapeles"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="2dp"
+        android:background="@drawable/fondo_accion"
+        android:contentDescription="@string/accion_pegar"
+        android:padding="5dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_portapapeles"
+        android:visibility="gone" />
+
+    <!-- Micrófono de dictado: 36 dp de alto y su ancho un 25 % menor que antes
+         (peso 0.67 en vez de 1.15), para dejar sitio a la fila de números. -->
     <ImageButton
         android:id="@+id/boton_micro"
         android:layout_width="0dp"
-        android:layout_height="56dp"
-        android:layout_margin="4dp"
-        android:layout_weight="1"
+        android:layout_height="36dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginEnd="4dp"
+        android:layout_weight="0.67"
         android:background="@drawable/fondo_micro_listo"
         android:contentDescription="@string/accion_micro"
-        android:padding="12dp"
+        android:padding="6dp"
         android:scaleType="fitCenter"
         android:src="@drawable/ic_micro" />
-
-    <ImageButton
-        android:id="@+id/boton_borrar"
-        style="@style/BotonTeclado"
-        android:contentDescription="@string/accion_borrar"
-        android:src="@drawable/ic_borrar" />
-
-    <ImageButton
-        android:id="@+id/boton_enter"
-        style="@style/BotonTeclado"
-        android:contentDescription="@string/accion_enter"
-        android:src="@drawable/ic_enter"
-        android:tint="@color/acento" />
 </LinearLayout>

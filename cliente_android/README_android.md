@@ -57,11 +57,26 @@ Si los dejas vacíos, la app arranca sin configurar y se rellenan en su pantalla
 La app entiende un **enlace de configuración**:
 
 ```
-dictadoime://config?url=https://dictado.tu-dominio.com&token=EL_TOKEN&clave=LA_CLAVE
+skipkey://config?url=https://dictado.tu-dominio.com&token=EL_TOKEN&clave=LA_CLAVE
 ```
 
 Te lo mandas por WhatsApp, lo tocas y la app queda configurada sin escribir
 nada. Se puede reenviar a otro celular cuando haga falta.
+
+### APK para otro usuario (sin el token maestro)
+
+Si el celular es de otra persona, el APK **no** debe llevar tu `dictadoToken`: la
+app arrancaría con tu sesión maestra (sin plan ni cupos) y la pantalla «Cuenta»
+no ofrecería el registro. Se compila así:
+
+```bash
+bash cliente_android/construir_apk.sh assembleDebug -PsinToken
+```
+
+Deja el APK en `.../outputs/apk/debug/dictado-sin-token.apk` (con la dirección y
+la clave del proxy dentro, el token fuera). Ya instalado, esa persona abre
+**Ajustes → Cuenta → Crear cuenta** con su correo y una contraseña de 8+
+caracteres; si el puente tiene correo configurado, mete el código de 6 dígitos.
 
 ## Instalar y activar
 
@@ -73,11 +88,11 @@ bash cliente_android/construir_apk.sh
 
 Después:
 
-1. Abre la app **Dictado por voz**: ya viene configurada (es también la pantalla
+1. Abre la app **SkipKey**: ya viene configurada (es también la pantalla
    que pide el permiso de micrófono, porque un teclado no puede pedirlo).
 2. Toca **Probar conexión**: debe decir *"Conexión correcta. Servidor de dictado:
    responde."*
-3. Toca **Activar el teclado en Android** y habilita **Dictado por voz**.
+3. Toca **Activar el teclado en Android** y habilita **SkipKey**.
 4. En cualquier app, toca el campo de texto y elige el teclado con **Elegir
    teclado** (o el botón de teclado del propio teclado).
 
@@ -85,23 +100,29 @@ Después:
 
 | Botón | Qué hace |
 |---|---|
-| 🎤 (verde) | Empieza a grabar. Se pone rojo. |
+| 🎤 (verde, en la banda de arriba) | Empieza a grabar. Se pone rojo. |
 | 🎤 (rojo) | Termina, transcribe e inserta el texto. |
-| ⌨ | Cambia a **nuestro teclado de letras** para editar a mano. **Manténlo pulsado** para el selector de teclados del sistema (solo si quieres usar Gboard). |
-| ⌫ | Borra un carácter. |
+| 🌐 (banda) | Traduce el texto del campo al idioma elegido. **Manténlo pulsado** para cambiar de idioma (inglés → portugués → italiano → chino → español). |
+| 📋 (banda, solo si hay algo) | Un toque **pega** lo último copiado; **mantenlo pulsado** para abrir el historial. |
+| ⌫ | Tecla del teclado de letras: borra un carácter (mantenla y borra de corrido). |
 | ↵ | Salto de línea. |
 
 Estados del micrófono: **verde** listo, **rojo** grabando, **naranja**
-transcribiendo, **gris** con error (el motivo aparece arriba, en pequeño).
+transcribiendo, **gris** con error (el motivo aparece al lado, en pequeño).
 
-### Modo edición: teclado propio
+### Una sola pantalla: letras y micrófono
 
-Al tocar **⌨** ya **no** salta a Gboard: se abre **nuestro propio teclado de letras**, en el
-mismo sitio. Así se corrige a mano sin cambiar de app de teclado (y sin el problema de
-volver).
+Ya **no hay dos modos que se sustituyan**. El teclado es siempre el mismo: arriba la
+**banda de dictado** (línea de estado a la izquierda; a la derecha los botones de
+**ajustes**, **traducir**, **portapapeles** —solo si hay algo copiado— y el **micrófono**,
+todos de 36 dp de alto) y debajo la barra de sugerencias y el
+**teclado de letras** completo. Así se dicta y se corrige a mano sin cambiar de pantalla
+ni saltar a Gboard. El engranaje abre la pantalla de ajustes de la app sin salir del
+teclado; al volver, «Volver al teclado de dictado» devuelve al campo donde estabas.
 
-El modo de letras **no se recuerda**: si dejas el teclado ahí y vuelves más tarde, aparece
-otra vez el **modo dictado** (el micrófono grande). Para editar, ⌨ otra vez.
+Antes había que tocar **⌨** para pasar a las letras y el micrófono de la franja para
+volver al dictado; esos dos botones ya no existen. El micrófono está siempre arriba, en
+sitio del texto de estado, y el ⌫/↵ son teclas del teclado de letras.
 
 | Fila | Teclas |
 |---|---|
@@ -124,13 +145,21 @@ otra vez el **modo dictado** (el micrófono grande). Para editar, ⌨ otra vez.
   (no el carácter `↵`, que la tipografía dibuja diminuto) que llena la tecla, y es la única
   tecla ancha además de `⇧` y `⌫`.
 - La **barra espaciadora ocupa media fila** (el ancho que antes gastaba la tecla 🎤).
-- **Para volver al dictado** desde el teclado de letras: el **micrófono de la franja de
-  arriba**, a la derecha del texto copiado (antes había una tecla 🎤 en la fila de abajo, que
-  le quitaba sitio al espacio).
-- Las letras van **pegadas y planas**: cada fondo llena toda su celda, sin separación y
+- **Para dictar** no hay que volver a ningún modo: el **micrófono** está siempre en la banda
+  de arriba, a la derecha de la línea de estado.
+- **Si el teclado no cabe, encoge las filas solo.** `pintarTeclado()` llama a
+  `encajarEnElHueco()`, que mide lo que ocupa el teclado, lo compara con la ventana del IME
+  y reparte lo que sobra entre las filas (`TecladoLetras.encoger`, mínimo 28 dp). Así la
+  fila de números y la de `?123` caben enteras en pantallas bajas.
+- Las letras van **planas y sin separación horizontal**: cada fondo llena su celda y
   **sin esquinas redondeadas**. Las esquinas curvas, con las teclas pegadas, dejaban un
   rombo en cada cruce de cuatro teclas. La zona que responde al dedo siempre fue la celda
   completa; al pulsar, la tecla solo cambia de color.
+- **Entre filas hay 4 dp de hueco** (2026-11-18), y no es adorno: las filas iban pegadas y
+  buscar el espacio daba en la `b` de la fila de arriba. Ahora el toque que se queda corto
+  cae en el hueco, que no pertenece a ninguna tecla, y **no escribe nada** (mejor no escribir
+  que escribir una letra equivocada). El coste: los huecos suman ~16 dp y `encajar()` encoge
+  las filas unos 3 dp (42 → ~39 dp).
 - La rejilla tiene **altura exacta**: cada fila mide lo mismo y cada tecla llena su fila.
   Los rótulos se miden **en píxeles, sobre el alto real de la tecla** (no en `sp`): antes,
   con `sp`, el tamaño crecía con el «tamaño de fuente» del celular y los glifos grandes
@@ -144,44 +173,81 @@ otra vez el **modo dictado** (el micrófono grande). Para editar, ⌨ otra vez.
 
 ### Portapapeles
 
-Si tienes algo copiado, encima del teclado aparece una **franja con el texto** (y el icono
-de portapapeles). Un toque y se **pega** donde esté el cursor. Sale en los dos modos
-(dictado y letras) y se puede apagar en los ajustes.
-En la **franja** está también el **micrófono**, a la derecha del texto copiado: un toque
-pasa al modo de dictado (el micrófono grande). Se enseña solo en el modo de letras; en el
-modo dictado está el grande y sobraría.
+Si tienes algo copiado, en la banda aparece un **botón 📋** entre el estado y el micrófono
+(antes era una franja entera encima del teclado, que gastaba ~50 dp de alto). Un toque
+**pega** donde esté el cursor y **mantenerlo pulsado** abre el historial. El botón queda
+atenuado cuando lo único que puede hacer es abrir el historial. Se puede apagar en los ajustes.
+Ya **no se ve el texto** copiado: se gana el alto de la franja a cambio.
 El portapapeles se lee **solo mientras el teclado está en pantalla** (Android 10 y
 posteriores solo lo permiten a quien tiene el foco, y ahí ese es el teclado) y **no se
 guarda en ninguna parte**: se relee cada vez que aparece el teclado o cambia el
 portapapeles. Si lo copiado pasa de 2 000 caracteres, no se ofrece.
 
-### Diccionario y sugerencias
+### Traducir
 
-Encima del teclado hay una **barra de tres sugerencias**, como la de Gboard:
+El botón **🌐** de la banda traduce el texto del campo: lo que tengas **seleccionado** o, si
+no hay selección, la **línea** donde está el cursor. El resultado **sustituye** al original.
+
+- **Un toque**: traduce al idioma elegido.
+- **Pulsación larga**: cambia el idioma de destino (inglés → portugués → italiano → chino →
+  español) y lo avisa con un mensaje corto.
+- Mientras traduce, la línea de estado dice *«Traduciendo al inglés…»*; si falla, el texto no
+  se toca y el motivo sale ahí.
+
+La traducción la hace el **puente** (`POST /api/v1/traducir`), en CPU, con Opus-MT; no pasa
+por Whisper ni toca el dictado. Con los modelos ya cargados tarda 0,1–0,8 s por frase; la
+primera vez de cada par puede tardar unos segundos (carga del modelo). Los pares con chino y
+portugués van por inglés (es→en→zh), porque no hay modelo directo español↔chino.
+
+### Diccionario y sugerencias
+Encima del teclado hay una **barra de tres sugerencias** y, al final, un botón estrecho para guardar palabras:
 
 | Toque | Qué hace |
 |---|---|
 | Una casilla | Escribe esa palabra en lugar de la que estás escribiendo (y añade un espacio). |
-| **Dedo largo** en una casilla | La añade a tu diccionario propio; si ya era tuya, la quita. |
+| **＋** (al final) | Guarda la palabra que estás escribiendo en tu diccionario. |
+| **✓** (al final) | Esa palabra ya es tuya: un toque la quita. |
+| **↩** (primera casilla) | Deshace la corrección que se acaba de hacer y guarda la palabra como la escribiste. |
+
+El botón **＋/✓** solo sale cuando hay algo que decidir: si la palabra ya viene en la lista base
+(49 600 palabras), no se ofrece guardarla. Y la casilla **↩** solo está mientras dura el aviso;
+entretanto ocupa uno de los tres sitios y quedan dos sugerencias.
 
 Qué corrige y qué predice:
 
+- **Las palabras que escribes se aprenden solas, a la primera** (2026-10-31). Antes hacía
+  falta escribirlas dos veces: la segunda todavía salía la corrección automática y había
+  que borrarla. Ahora, en cuanto cierras una palabra con espacio o puntuación, queda
+  guardada como tuya y no se vuelve a corregir.
+- **Si te corrige y no querías, toca ↩**: el texto vuelve a como lo escribiste **y la
+  palabra queda aprendida para siempre**. Esa es la forma de decir «esto era lo que yo
+  quería» sin pasar por los ajustes. (Hasta 2026-11-18 esto lo hacía el primer ⌫, sin
+  avisar: la tecla cambiaba de función y el texto se reescribía solo. Ya no: **⌫ borra
+  siempre**, y deshacer es una casilla que se ve.)
+- **Los nombres propios no se tocan**: si la mayúscula inicial la pusiste tú (⇧ a mano) y
+  no era la mayúscula automática de empezar frase, la palabra no se autocorrige. Así se
+  respetan apellidos, marcas y topónimos.
 - **Erratas de una letra**: `casq` → `casa` (letra cambiada, que sobra, que falta o dos
   vecinas cambiadas de sitio).
 - **Tildes que faltan**: `avion` → `avión`, `cancion` → `canción`. Solo cuando lo
   escrito **no** es una palabra: `esta` y `está` se respetan tal cual, porque las dos
   existen.
 - **Predicción de la siguiente palabra**: aprende qué palabra suele seguir a cuál
-  (tus propios bigramas) y, cuando no hay contexto, muestra tus palabras más usadas.
+  (tus propios bigramas) y, cuando no hay contexto, muestra tus palabras más usadas
+  (las que has escrito al menos dos veces, para no llenar la barra de ruido).
 - **Mayúscula automática** al empezar oración (después de `.`, `!`, `?` o salto de
   línea), **solo si el campo la pide**. En campos de **correo, URL o contraseña** no se
   pone mayúscula sola, no se sugiere nada y no se corrige nada: son campos en los que el
   teclado tiene que dejar escribir el correo tal cual (antes la primera letra salía en
   mayúscula y parecía que volvía a ponerse sola cada vez que la cambiabas).
+- **Léxico peruano en la lista base** (2026-10-31): chela, chévere, bacán, palta, guagua,
+  jerma, pisco, lúcuma, granadilla, maracuyá, tumbo, chirimoya, guanábana, sánguche,
+  pollada, salchipapa, juanes, tacacho, rachi, yape, plin, replana, custer… Se añaden en
+  `herramientas/generar_diccionario.py` y se regenera `assets/diccionario_es.txt` (el
+  script avisa si el corrector estropearía alguna).
 - **Contexto**: las sugerencias de un mismo prefijo se reordenan según la palabra
   anterior, con los bigramas que va aprendiendo.
-- **Deshacer**: si la corrección no te gusta, el primer ⌫ deja la palabra como la
-  escribiste.
+- **Deshacer**: si la corrección no te gusta, toca **↩** en la barra; el ⌫ ya solo borra.
 
 El diccionario base son **49 600 palabras del español con su frecuencia**, dentro del
 APK (`assets/diccionario_es.txt`, lista libre de
@@ -195,8 +261,65 @@ La lista se puede rehacer con `python3 cliente_android/herramientas/generar_dicc
 (descarga la lista original si no está, aplica el filtro y la lista curada, y **avisa si
 el corrector estropearía alguna palabra curada**; si eso pasa, termina con error).
 
-Para llegar a Gboard, **mantén pulsado `?123`** (o el botón ⌨ del modo dictado): sale el
+#### Correcciones del dictado y perfiles
+
+Cuando el motor escribe una palabra y tú la cambias —la seleccionas y escribes otra, o la
+seleccionas y dictas otra vez— el teclado **aprende la pareja** *lo que dictó → lo que
+querías* (2026-11-01). Con esa pareja:
+
+- **La primera vez que corriges, ya queda aprendida**: la corrección aparece como primera
+  casilla de la barra al escribir esa palabra y, **en el dictado siguiente, el texto sale ya
+  con tu palabra** (respetando si era nombre propio o iba en mayúsculas). Antes hacían falta
+  dos correcciones y, en la práctica, parecía que no se había aprendido nada.
+- **Si te equivocaste al enseñarla, toca ↩**: deshacer la corrección también **olvida la
+  pareja**, así no vuelve a aplicarse.
+
+Solo se aprende en campos normales: en contraseñas, correos y campos sin sugerencias no se
+toca nada.
+
+**Mis palabras (2026-11-18).** En Ajustes hay un botón **«Mis palabras y correcciones»** que
+abre la lista de lo que el teclado ha guardado de ti en ese perfil: las palabras propias que
+**no** vienen en la lista base, con cuántas veces las usaste, y las correcciones del dictado
+(`lo que dijo el motor → lo que querías`). Cada fila lleva una **✕** para quitarla; antes eso
+solo se podía hacer con un dedo largo en la barra, a ciegas, y no había manera de ver qué
+estaba guardado.
+
+**Perfiles.** En Ajustes hay un **perfil del diccionario** (por defecto `personal`). Cada
+perfil tiene sus propias palabras, bigramas y correcciones, en archivos
+`dictado_<perfil>_*.txt` dentro de la app: dos personas que compartan el celular no se
+mezclan. El cambio se aplica al volver a abrir el teclado, y el botón **«Borrar el
+diccionario de este perfil»** deja ese perfil como nuevo sin tocar los demás.
+
+Para llegar a Gboard, **mantén pulsado `?123`**: sale el
 selector de teclados.
+
+### Cuenta y planes
+
+La app se publica en Google Play, así que **cualquiera puede crearse una cuenta desde la
+propia app**: botón **Cuenta y plan** en Ajustes → **usuario**, contraseña (mínimo 8),
+correo opcional (solo para recuperar) y, si el servidor tiene correo configurado, el código
+de 6 números que llega por email.
+
+- **Sin cuenta el teclado funciona igual**: dicta el reconocedor del celular, que es
+  gratis, no usa la red y no gasta nada del servidor.
+- **Dentro de la app hay tres planes** (2026-11-18): Gratis dicta con el motor del celular;
+  Básico da 30 min de servidor y 50 traducciones al día; Pro no tiene tope diario, suma el
+  dictado en vivo y 3 dispositivos. El puente comprueba el plan en cada petición (403): la
+  comprobación no depende del APK.
+- **Planes**: Gratis (motor del celular) · Básico (30 min de servidor y 50 traducciones al
+  día, 1 dispositivo) · Pro (minutos y traducciones **ilimitados**, dictado en vivo y 3
+  dispositivos).
+- El botón **Ver planes** pinta el catálogo que publica el puente
+  (`GET /api/v1/planes`, público: se ve con o sin sesión) y marca en cuál estás. Es solo
+  informativo: **aquí no se cobra ni se cambia nada**; el plan lo escribe el puente y los
+  cambios se piden al administrador (`puente_web/herramientas/cambiar_plan.py`). El cobro
+  dentro de la app llegará con Google Play Billing (entrega 3), que Google exige para
+  vender desde la tienda.
+- La pantalla enseña el **plan y los cupos de hoy** («Quedan hoy: 128 min de servidor»).
+- **Cerrar sesión** no borra el diccionario del celular; **Borrar mi cuenta** sí borra
+  todo en el servidor (lo exige Google Play).
+- La contraseña **no se guarda**: se queda el token de ese dispositivo, cifrado en
+  `EncryptedSharedPreferences`.
 
 ### Ajustes del teclado (en la app)
 
@@ -206,8 +329,10 @@ selector de teclados.
 | **Vibrar al pulsar las teclas** | Vibración corta en cada tecla. |
 | **Sugerencias al escribir** | La barra de sugerencias y las predicciones (déjala activada salvo que quieras la barra fuera). |
 | **Corregir al terminar la palabra** | Autocorrección de tildes y erratas al pulsar espacio o puntuación. |
+| **Perfil del diccionario** | Con qué perfil se aprenden las palabras y correcciones (cada uno tiene su diccionario). |
+| **Cuenta y plan** | Entrar, crear cuenta y ver el plan y los cupos de hoy. |
 | **Ofrecer lo copiado para pegar** | La franja del portapapeles encima del teclado (un toque pega el texto copiado). |
-| **Tamaño de las teclas** | De 36 a 64: se aplica a los dos modos (letras y dictado). |
+| **Tamaño de las teclas** | De 36 a 64: se aplica a las teclas del teclado de letras. |
 
 Se cambian en la app y se guardan al tocar **Guardar**; el teclado lo nota al volver a
 aparecer, sin reiniciar nada.
@@ -253,14 +378,20 @@ permite que una app se ponga por sí sola como teclado (eso exige ser app de sis
 | `ServicioTecladoVoz.kt` | El teclado (IME): botones, estados, sugerencias y escritura del texto. |
 | `TecladoLetras.kt` | El teclado de letras y símbolos, construido en código. |
 | `Diccionario.kt` | Lista de palabras, corrección de erratas, diccionario propio y bigramas. |
-| `BarraSugerencias.kt` | La franja de tres sugerencias encima del teclado. |
+| `BarraSugerencias.kt` | La franja de tres sugerencias encima del teclado, con su botón ＋/✓ y el ↩ de deshacer. |
+| `PalabrasActivity.kt` | «Mis palabras»: ver y borrar lo que el diccionario guardó del usuario. |
 | `GestorAudio.kt` | `AudioRecord` a 16 kHz mono PCM16. |
 | `ClienteRed.kt` | REST y WebSocket con OkHttp. |
 | `Ajustes.kt` | Ajustes cifrados (`EncryptedSharedPreferences`). |
 | `AjustesActivity.kt` | Pantalla de ajustes y permiso de micrófono. |
 
-Total: **3965 líneas** con comentarios, repartidas en 13 archivos. El diccionario
+Total: **5553 líneas** con comentarios, repartidas en 15 archivos. El diccionario
 aporta **655 KB** de datos que viajan dentro del APK (se comprimen solos al empaquetar).
+
+> La palabra clave «computadora» y la ejecución de órdenes ya **no** están aquí: desde el
+> 2026-11-14 viven en el proyecto hermano `Asistente por voz` (`android/`). El teclado dicta
+> con el botón del micrófono y el campo a la vista, y el APK dejó de llevar el modelo Vosk
+> (38 MB).
 
 La lista de palabras se rehace con `cliente_android/herramientas/generar_diccionario.py`,
 que también comprueba que el corrector no estropee ninguna palabra curada.
@@ -299,9 +430,24 @@ existe** en el `android.jar` de android-34 con el que se compila aquí.
   curso») y ese aviso tapaba el error real.
 - Sin el permiso de `RECORD_AUDIO` el teclado no falla en silencio: muestra el
   aviso en la barra de estado del propio teclado.
-- **El modo del teclado no se guarda**: `onStartInputView` vuelve siempre al modo de
-  dictado. El servicio (IME) vive mucho más que una pantalla de teclado, así que el
-  campo `modoEdicion` se quedaba puesto de una vez para otra.
+- **Todo cabe en una pantalla** (2026-10-31): antes el micrófono grande y las letras eran
+  dos modos que se sustituían, y había que ir y volver con la tecla ⌨ / el micro de la franja.
+  Ahora la banda (`vista_dictado.xml`: estado + portapapeles + `boton_micro`) es fija arriba
+  y debajo va siempre el teclado de letras (`pintarTeclado`). No existe `modoEdicion`: el IME
+  solo tiene un estado y no hay que recordar en cuál se quedó.
+- **La barra de navegación se dibuja ENCIMA de la ventana del teclado.** Medido el
+  2026-10-31 en el Xiaomi (Android 16): la ventana del IME llegaba hasta el borde de la
+  pantalla y los últimos 47 dp quedaban debajo de los botones del sistema, así que el espacio
+  y el ↵ salían cortados. Se arregla con `ViewCompat.setOnApplyWindowInsetsListener` en el
+  root de `keyboard_view.xml` (relleno inferior = inset de `navigationBars`).
+- **La ventana del IME no crece a voluntad** (317 dp en ese celular): con la banda, la fila
+  de números y la barra de sugerencias la suma se pasaba. Por eso existe
+  `encajarEnElHueco()` + `TecladoLetras.encoger()`: si no cabe, se bajan las filas lo justo
+  (28 dp mínimo) en vez de recortar el teclado por abajo.
+- **El alto de la franja de sugerencias bajó de 38 a 32 dp** y el micrófono de 56 a 36 dp
+  (el 25 % que pidió el usuario) para dejar sitio a la fila de números.
+- **El alto por defecto de tecla bajó de 46 a 42 dp** con ese cambio. El ajuste manual sigue
+  de 36 a 64.
 - **Lo que pide el campo manda**: `inputType` dice si toca mayúscula al empezar frase y si
   el campo admite sugerencias/corrección. En un correo o una contraseña no se capitaliza,
   no se sugiere y no se aprende nada (que no acaben direcciones y claves en el
@@ -319,5 +465,7 @@ existe** en el `android.jar` de android-34 con el que se compila aquí.
   se veía en la captura. Medido sobre la captura, esas teclas eran ~23px más altas.
   Arreglo: **alto de fila exacto** (`LinearLayout.LayoutParams` de la fila), **teclas
   `match_parent`** (llenan su fila) y **tamaños en píxeles** calculados sobre el alto real.
-- **La franja de arriba ahora vive en los dos modos** (antes solo salía con algo copiado):
-  en el modo de letras lleva el micrófono, y su visibilidad se recalcula en `mostrarModo`.
+- **La franja del portapapeles ya no existe**: pasó a ser el botón 📋 de la banda (el
+  botón grande del micrófono está siempre ahí) y su visibilidad se recalcula en
+  `refrescarPortapapeles`: solo aparece si hay texto o historial que ofrecer, y nunca en un
+  campo de contraseña.

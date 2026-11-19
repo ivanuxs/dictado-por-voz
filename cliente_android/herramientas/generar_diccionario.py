@@ -93,6 +93,17 @@ casaca chompa buzo zapatillas chamba jato flaca pata toy enano
 """.split():
     CURADAS.setdefault(_palabra, RESTO)
 
+# Peruanismos y palabras del día a día de acá, que en los subtítulos casi no
+# salen. Sin esto, el corrector «arreglaba» palabras normales (2026-10-31): el
+# usuario escribía una palabra suya y se la cambiaban solos. Van al piso más
+# bajo de lo curado, que sigue por encima de FRECUENCIA_RARA en Diccionario.kt.
+for _palabra in """
+chela chelas chévere bacán bacanazo palta paltas guagua guaguas jerma pisco
+lúcuma granadilla maracuyá tumbo chirimoya guanábana sánguche sanguche
+pollada salchipapa juanes tacacho rachi yape plin yapear replana custer
+""".split():
+    CURADAS.setdefault(_palabra, RESTO)
+
 
 def descargar() -> None:
     """Trae la lista original si no está al lado del script."""

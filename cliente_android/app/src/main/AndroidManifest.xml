@@ -40,25 +40,41 @@
         </service>
 
         <!-- Pantalla de ajustes (y el lanzador: sirve para pedir el micrófono).
-             singleTop para que el enlace de configuración no abra otra copia. -->
+             singleTop para que el enlace de configuración no abra otra copia.
+             SIN android:label: el rótulo de la actividad GANA al app_name en el
+             cajón de apps y en recientes, y aquí ponía «Ajustes del dictado»
+             (el nombre viejo de la app). Sin él, hereda @string/app_name. -->
         <activity
             android:name=".AjustesActivity"
             android:exported="true"
-            android:label="@string/ajustes_titulo"
             android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- Configuración por enlace:
-                 dictadoime://config?url=...&token=...&clave=... -->
+                 skipkey://config?url=...&token=...&clave=... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="dictadoime" android:host="config" />
+                <data android:scheme="skipkey" android:host="config" />
             </intent-filter>
         </activity>
+
+        <!-- Cuenta: entrar, crear cuenta, confirmar el correo y ver el plan.
+             No se exporta: se abre desde Ajustes, no desde fuera. -->
+        <activity
+            android:name=".CuentaActivity"
+            android:exported="false"
+            android:label="@string/cuenta_titulo" />
+
+        <!-- Mis palabras: ver y borrar lo que el diccionario guardó del usuario.
+             Tampoco se exporta: se entra desde Ajustes. -->
+        <activity
+            android:name=".PalabrasActivity"
+            android:exported="false"
+            android:label="@string/palabras_titulo" />
 
         <!-- Teja de ajustes rápidos: vuelve al teclado de dictado desde cualquier
              app. Hay que añadirla al panel (editar el panel y arrastrarla). -->

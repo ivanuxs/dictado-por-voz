@@ -8,6 +8,11 @@
 #   bash cliente_android/construir_apk.sh              # APK de depuración
 #   bash cliente_android/construir_apk.sh assembleRelease
 #
+# Para un APK destinado a OTRA persona (sin el token maestro dentro):
+#   bash cliente_android/construir_apk.sh assembleDebug -PsinToken
+# deja además una copia en .../outputs/apk/debug/dictado-sin-token.apk, así no
+# se pisa el APK privado (el que sí lleva el token) al compilar los dos.
+#
 # El APK queda en cliente_android/app/build/outputs/apk/debug/app-debug.apk
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -37,5 +42,36 @@ fi
 
 cd "$AQUI"
 TAREA="${1:-assembleDebug}"
+shift || true
+
+# Argumentos extra para Gradle, p. ej. -PsinToken (APK de otro usuario).
+SIN_TOKEN=0
+for argumento in "$@"; do
+    case "$argumento" in
+        -PsinToken|--project-prop=sinToken*|-PsinToken=*) SIN_TOKEN=1 ;;
+    esac
+done
+
+ORIGEN="$AQUI/app/build/outputs/apk/debug/app-debug.apk"
+
+# La compilación SIEMPRE escribe app-debug.apk. Si ahora se compila sin token,
+# el APK privado (el que sí lo lleva) se perdería: se guarda ANTES de compilar,
+# que es cuando ese archivo todavía es el de la compilación anterior.
+if [ "$SIN_TOKEN" = 1 ] && [ -f "$ORIGEN" ]; then
+    cp -f "$ORIGEN" "$AQUI/app/build/outputs/apk/debug/dictado-anterior.apk"
+    echo "El APK que había antes quedó como dictado-anterior.apk"
+fi
+
 echo "== Compilando $TAREA (JDK 17 en $JAVA_HOME) =="
-exec "$BASE/gradle-8.7/bin/gradle" --no-daemon "$TAREA"
+"$BASE/gradle-8.7/bin/gradle" --no-daemon "$TAREA" "$@"
+
+# El APK sin token maestro se guarda con otro nombre.
+if [ "$SIN_TOKEN" = 1 ]; then
+    DESTINO="$AQUI/app/build/outputs/apk/debug/dictado-sin-token.apk"
+    if [ -f "$ORIGEN" ]; then
+        cp -f "$ORIGEN" "$DESTINO"
+        echo "APK para otro usuario (sin token maestro): $DESTINO"
+    else
+        echo "Ojo: no está $ORIGEN; el APK quedó donde lo dejó la tarea $TAREA." >&2
+    fi
+fi

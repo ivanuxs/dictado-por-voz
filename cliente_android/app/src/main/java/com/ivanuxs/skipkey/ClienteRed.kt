@@ -1,4 +1,4 @@
-package com.ivanuxs.dictadoime
+package com.ivanuxs.skipkey
 
 import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
@@ -46,7 +46,12 @@ class ClienteRed(private val ajustes: Ajustes) {
         .readTimeout(ajustes.segundosEspera.toLong(), TimeUnit.SECONDS)
         .build()
 
-    /** Modo normal: manda el audio completo y espera el texto. */
+    /**
+     * Modo normal: manda el audio completo y espera el texto.
+     *
+     * El texto llega **limpio**: el servidor ya no pone marcas y el teclado se
+     * limita a escribirlo (las órdenes por voz viven en el asistente).
+     */
     fun transcribir(pcm: ByteArray): Resultado {
         if (!ajustes.configurado) {
             return Resultado.Error("Falta configurar la dirección o el token.")
@@ -100,8 +105,52 @@ class ClienteRed(private val ajustes: Ajustes) {
     }
 
     /** Abre una sesión de dictado por WebSocket (vivo = con texto parcial). */
-    fun sesionViva(avisos: AvisosVivo, vivo: Boolean = true): SesionViva =
-        SesionViva(ajustes, cliente, avisos, vivo)
+    fun sesionViva(
+        avisos: AvisosVivo,
+        vivo: Boolean = true
+    ): SesionViva = SesionViva(ajustes, cliente, avisos, vivo)
+
+    /**
+     * Traduce un texto con el puente (Opus-MT en CPU, dentro del puente).
+     *
+     * `origen` es "auto" por defecto: el puente lo adivina (chino por
+     * caracteres, portugués por ã/õ/ç, inglés por palabras frecuentes, si no
+     * español). No toca el dictado: es una petición de texto aparte.
+     */
+    fun traducir(texto: String, destino: String, origen: String = "auto"): Resultado {
+        if (!ajustes.configurado) {
+            return Resultado.Error("Falta configurar la dirección o el token.")
+        }
+        val cuerpo = JSONObject()
+            .put("texto", texto)
+            .put("destino", destino)
+            .put("origen", origen)
+            .toString()
+        val peticion = constructor("/api/v1/traducir")
+            .post(cuerpo.toRequestBody(TIPO_JSON))
+            .build()
+        return try {
+            cliente.newCall(peticion).execute().use { respuesta ->
+                val recibido = respuesta.body?.string().orEmpty()
+                if (respuesta.isSuccessful) {
+                    val traducido = JSONObject(recibido).optString("texto")
+                    if (traducido.isBlank()) {
+                        Resultado.Error("El servidor no devolvió la traducción.")
+                    } else {
+                        Resultado.Texto(traducido)
+                    }
+                } else {
+                    Resultado.Error(motivoDe(recibido, respuesta.code))
+                }
+            }
+        } catch (e: IOException) {
+            Log.w(ETIQUETA, "Fallo de red al traducir: ${e.message}")
+            Resultado.Error("No se pudo contactar con el puente: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(ETIQUETA, "Respuesta inesperada al traducir: ${e.message}")
+            Resultado.Error("Respuesta inesperada del puente.")
+        }
+    }
 
     private fun constructor(ruta: String): Request.Builder {
         val peticion = Request.Builder()
@@ -136,6 +185,7 @@ class ClienteRed(private val ajustes: Ajustes) {
     companion object {
         private const val ETIQUETA = "ClienteRed"
         private val TIPO_PCM = "application/octet-stream".toMediaType()
+        private val TIPO_JSON = "application/json".toMediaType()
     }
 }
 
@@ -194,7 +244,12 @@ class SesionViva(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 // `inicio` tiene que salir ANTES que cualquier audio: hasta que
                 // el puente no lo recibe, no hay sesión y el audio se descarta.
-                webSocket.send(if (vivo) ORDEN_INICIO_VIVO else ORDEN_INICIO_NORMAL)
+                val orden = buildString {
+                    append("{\"tipo\":\"inicio\",\"modo\":")
+                    append(if (vivo) "\"vivo\"" else "\"normal\"")
+                    append("}")
+                }
+                webSocket.send(orden)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -295,8 +350,6 @@ class SesionViva(
 
     companion object {
         private const val ETIQUETA = "SesionViva"
-        private const val ORDEN_INICIO_VIVO = """{"tipo":"inicio","modo":"vivo"}"""
-        private const val ORDEN_INICIO_NORMAL = """{"tipo":"inicio","modo":"normal"}"""
         private const val ORDEN_FIN = """{"tipo":"fin"}"""
         private const val ORDEN_CANCELAR = """{"tipo":"cancelar"}"""
     }

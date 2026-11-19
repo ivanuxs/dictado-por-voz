@@ -5,15 +5,18 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Credenciales del puente que se meten DENTRO del APK, para no tener que
-// escribirlas en el celular. Se leen de local.properties, que NO se versiona
-// (así el token y la clave no acaban en el repositorio público):
+// Credenciales del puente que se pueden meter DENTRO del APK. Se leen de
+// local.properties, que NO se versiona (así el token y la clave no acaban en el
+// repositorio público):
 //
 //     dictadoUrl=https://dictado.tu-dominio.com
 //     dictadoToken=...
 //     dictadoClave=...
 //
-// Si faltan, la app arranca sin configurar y se rellenan en su pantalla.
+// OJO, para el APK de Google Play: compilar SIN dictadoToken ni dictadoClave.
+// El APK público no debe llevar secretos; cada usuario entra con su cuenta
+// («Cuenta y plan») y recibe su propio token. Si las líneas están puestas, el
+// token maestro viaja dentro del APK y cualquiera que lo descompile lo tiene.
 val credenciales = Properties().apply {
     val archivo = rootProject.file("local.properties")
     if (archivo.exists()) archivo.inputStream().use { load(it) }
@@ -25,19 +28,28 @@ val credencial: (String) -> String = { nombre ->
         .replace("\"", "\\\"")
 }
 
+// APK para OTRO usuario: se compila con -PsinToken y el token maestro se queda
+// fuera (la dirección y la clave del proxy sí van dentro). Si el token viajara,
+// la app arrancaría con la sesión maestra —sin plan ni cupos— y la pantalla
+// «Cuenta» no ofrecería crear la cuenta, porque ya se creería dentro.
+val sinToken: Boolean = providers.gradleProperty("sinToken").orNull
+    ?.lowercase()
+    ?.let { it !in setOf("false", "0", "no") }
+    ?: false
+
 android {
-    namespace = "com.ivanuxs.dictadoime"
+    namespace = "com.ivanuxs.skipkey"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.ivanuxs.dictadoime"
+        applicationId = "com.ivanuxs.skipkey"
         minSdk = 26
         targetSdk = 34
         versionCode = 3
         versionName = "1.2"
 
         val urlBase = credencial("dictadoUrl")
-        val token = credencial("dictadoToken")
+        val token = if (sinToken) "" else credencial("dictadoToken")
         val clave = credencial("dictadoClave")
         buildConfigField("String", "URL_BASE", "\"$urlBase\"")
         buildConfigField("String", "TOKEN", "\"$token\"")

@@ -1,14 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Dictado por voz</string>
-    <string name="ime_name">Dictado por voz</string>
+    <string name="app_name">SkipKey</string>
+    <string name="ime_name">SkipKey</string>
     <string name="idioma_es">Español (dictado)</string>
-    <string name="ajustes_titulo">Ajustes del dictado</string>
-    <string name="ajustes_encabezado">Dictado por voz</string>
-    <string name="ajustes_subtitulo">Teclado de dictado y edición manual</string>
+    <string name="ajustes_encabezado">SkipKey</string>
+    <string name="ajustes_subtitulo">Ajustes del teclado</string>
+    <!-- Monograma de la cabecera (el mismo del icono de la app). -->
+    <string name="app_monograma">SK</string>
+
+    <!-- Rótulos de las tarjetas de ajustes -->
+    <string name="ajustes_seccion_conexion">Conexión con el servidor</string>
+    <string name="ajustes_seccion_motor">Motor del dictado</string>
+    <string name="ajustes_seccion_diccionario">Diccionario y sugerencias</string>
+    <string name="ajustes_seccion_portapapeles">Portapapeles</string>
+    <string name="ajustes_seccion_sistema">Sistema y teclado del celular</string>
     <string name="ajustes_usar_servidor">Usar mi servidor de dictado</string>
     <string name="ajustes_usar_servidor_ayuda">Apagado, dicta el reconocedor del celular: gratis y sin cuenta. Encendido, usa el servidor (más preciso), que necesita dirección y token.</string>
     <string name="ajustes_servidor_sin_credenciales">Ajustes guardados. Sin dirección y token se usará el reconocedor del celular.</string>
+
+    <!-- Cuenta y planes -->
+    <string name="ajustes_cuenta">Cuenta y plan</string>
+    <string name="ajustes_cuenta_con">Cuenta: %1$s · %2$s</string>
+    <string name="cuenta_titulo">Tu cuenta</string>
+    <string name="cuenta_sin_sesion">Sin sesión: dictas con el motor del celular, que es gratis. El servidor y las funciones avanzadas son de pago.</string>
+    <string name="cuenta_usuario">Usuario</string>
+    <string name="cuenta_usuario_ayuda">tu-nombre-de-usuario</string>
+    <string name="cuenta_correo">Correo (opcional)</string>
+    <string name="cuenta_correo_ayuda">Solo para recuperar la cuenta</string>
+    <string name="cuenta_contrasena">Contraseña</string>
+    <string name="cuenta_contrasena_ayuda">Al menos 8 caracteres</string>
+    <string name="cuenta_codigo">Código de 6 números que llegó a tu correo</string>
+    <string name="cuenta_entrar">Entrar</string>
+    <string name="cuenta_crear">Crear cuenta</string>
+    <string name="cuenta_verificar">Confirmar código</string>
+    <string name="cuenta_actualizar">Actualizar estado y cupos</string>
+    <string name="cuenta_sincronizar">Sincronizar diccionario y ajustes</string>
+    <string name="cuenta_sincronizado">Diccionario y ajustes sincronizados.</string>
+    <string name="cuenta_salir">Cerrar sesión</string>
+    <string name="cuenta_borrar">Borrar mi cuenta</string>
+    <string name="cuenta_volver">Volver</string>
+    <string name="cuenta_plan">Plan: %1$s</string>
+    <string name="cuenta_falta_datos">Escribe tu usuario y tu contraseña.</string>
+    <string name="cuenta_falta_codigo">Escribe tu correo y el código de 6 números.</string>
+    <string name="cuenta_clave_corta">La contraseña debe tener al menos 8 caracteres.</string>
+    <string name="cuenta_entrada">Entraste como %1$s.</string>
+    <string name="cuenta_creada">Cuenta creada.</string>
+    <string name="cuenta_revisa_correo">Te enviamos un código a tu correo.</string>
+    <string name="cuenta_verificada">Correo confirmado.</string>
+    <string name="cuenta_salir_pregunta">Se cerrará la sesión en este celular. Seguirás pudiendo dictar con el motor del celular.</string>
+    <string name="cuenta_sesion_cerrada">Sesión cerrada en este celular.</string>
+    <string name="cuenta_borrar_pregunta">Se borrará tu cuenta y todo lo asociado (diccionario, ajustes y sesiones). Esto no se puede deshacer.</string>
+    <string name="cuenta_borrada">Cuenta eliminada.</string>
+    <string name="cuenta_planes">Ver planes</string>
+    <string name="cuenta_planes_titulo">Planes</string>
+    <string name="cuenta_planes_actual">tu plan</string>
+    <string name="cuenta_planes_motor">dicta con el motor del celular, sin usar el servidor</string>
+    <string name="cuenta_planes_min">%1$d min de servidor al día</string>
+    <string name="cuenta_planes_trad">%1$d traducciones al día</string>
+    <string name="cuenta_planes_vivo">dictado en vivo (el texto aparece mientras hablas)</string>
+    <string name="cuenta_planes_dispositivos">%1$d dispositivo(s)</string>
+    <string name="cuenta_planes_ayuda">Para cambiar de plan hay que pedírselo al administrador: el cobro dentro de la app llegará con la versión de Google Play.</string>
+    <string name="cuenta_planes_error">No se pudieron leer los planes: %1$s</string>
 
     <!-- Estados del micrófono -->
     <string name="estado_listo">Listo</string>
@@ -16,20 +68,68 @@
     <string name="estado_procesando">Transcribiendo…</string>
     <string name="estado_error">Error</string>
     <string name="estado_escuchando">Escuchando: %1$s</string>
-    <string name="edicion_estado">Edición manual · toca 🎤 para volver al dictado</string>
 
     <!-- Acciones del teclado -->
     <string name="accion_micro">Grabar dictado</string>
-    <string name="accion_borrar">Borrar</string>
-    <string name="accion_enter">Enter</string>
-    <string name="accion_teclado">Cambiar de teclado</string>
-    <string name="aviso_volver">Para volver al dictado: toca la tecla de cambio de teclado del otro teclado (el globo) o el icono de teclado de la barra inferior.</string>
+    <string name="accion_traducir">Traducir</string>
+    <string name="accion_ajustes">Abrir los ajustes</string>
+
+    <!-- Traducción -->
+    <string name="traduciendo">Traduciendo al %1$s…</string>
+    <string name="traduccion_sin_texto">No hay texto que traducir en este campo.</string>
+    <string name="traduccion_sin_configurar">Falta configurar la dirección o el token del puente.</string>
+    <string name="traduccion_requiere_plan">Traducir es una función de pago. Entra en Cuenta y plan.</string>
+    <string name="traduccion_idioma">Traducir al %1$s</string>
+    <string name="idioma_en">inglés</string>
+    <string name="idioma_pt">portugués</string>
+    <string name="idioma_it">italiano</string>
+    <string name="idioma_zh">chino</string>
+    <string name="idioma_es_texto">español</string>
+    <string name="idioma_en_may">Inglés</string>
+    <string name="idioma_pt_may">Portugués</string>
+    <string name="idioma_it_may">Italiano</string>
+    <string name="idioma_zh_may">Chino</string>
+    <string name="idioma_es_may">Español</string>
+    <string name="ajustes_idioma_traduccion">Idioma al que traduce el botón 🌐</string>
+    <string name="ajustes_idioma_ayuda">El botón 🌐 traduce el texto del campo (la selección o la línea del cursor) a este idioma. No cambia solo.</string>
+    <string name="estado_listo_traduccion">Listo · 🌐 %1$s</string>
 
     <!-- Diccionario y sugerencias -->
     <string name="ajustes_sugerencias">Sugerencias al escribir</string>
     <string name="ajustes_autocorreccion">Corregir al terminar la palabra</string>
+    <string name="ajustes_perfil">Perfil del diccionario</string>
+    <string name="ajustes_perfil_ayuda">Cada perfil guarda sus propias palabras y correcciones. El cambio se aplica al volver a abrir el teclado.</string>
+    <string name="ajustes_borrar_diccionario">Borrar el diccionario de este perfil</string>
+    <string name="ajustes_borrar_diccionario_titulo">Borrar diccionario</string>
+    <string name="ajustes_borrar_diccionario_pregunta">Se borrarán las palabras aprendidas y las correcciones del perfil «%1$s». Esto no se puede deshacer.</string>
+    <string name="ajustes_diccionario_borrado">Diccionario del perfil «%1$s» borrado.</string>
     <string name="palabra_aprendida">Añadida al diccionario: %1$s</string>
     <string name="palabra_olvidada">Quitada del diccionario: %1$s</string>
+
+    <!-- Barra de sugerencias: deshacer y guardar a la vista -->
+    <string name="barra_volver_a">↩ %1$s</string>
+    <string name="barra_volver">↩ volver</string>
+    <string name="barra_guardar">Guardar esta palabra en el diccionario</string>
+    <string name="barra_guardada">Ya está en el diccionario. Toca para quitarla</string>
+    <string name="palabra_restaurada">Restaurada y guardada: %1$s</string>
+    <string name="dictado_restaurado">Dictado restaurado tal como llegó</string>
+
+    <!-- Pantalla «Mis palabras» -->
+    <string name="ajustes_mis_palabras">Mis palabras y correcciones</string>
+    <string name="ajustes_mis_palabras_ayuda">Ver y borrar lo que el teclado ha guardado de ti.</string>
+    <string name="palabras_titulo">Mis palabras</string>
+    <string name="palabras_subtitulo">Lo que el teclado recuerda del perfil «%1$s».</string>
+    <string name="palabras_seccion_palabras">PALABRAS</string>
+    <string name="palabras_seccion_correcciones">CORRECCIONES DEL DICTADO</string>
+    <string name="palabras_vacio">Todavía no hay palabras guardadas.\nMientras escribes, toca ＋ en la barra de sugerencias para guardar una palabra.</string>
+    <string name="palabras_sin_correcciones">Aún no has corregido ninguna palabra dictada.</string>
+    <string name="palabras_usos_uno">1 uso</string>
+    <string name="palabras_usos">%1$d usos</string>
+    <string name="palabras_borrar">Quitar «%1$s» del diccionario</string>
+    <string name="palabras_correccion_borrar">Olvidar la corrección «%1$s → %2$s»</string>
+    <string name="palabras_borrada">Quitada del diccionario: %1$s</string>
+    <string name="palabras_correccion_borrada">Corrección olvidada: %1$s → %2$s</string>
+    <string name="palabras_volver">Volver a los ajustes</string>
 
     <!-- Portapapeles -->
     <string name="accion_pegar">Pegar lo copiado</string>

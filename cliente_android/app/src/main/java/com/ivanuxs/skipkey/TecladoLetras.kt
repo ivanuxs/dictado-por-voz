@@ -1,4 +1,4 @@
-package com.ivanuxs.dictadoime
+package com.ivanuxs.skipkey
 
 import android.content.Context
 import android.graphics.Typeface
@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -60,8 +61,23 @@ class TecladoLetras(
     private val altoTecla = ajustes.alturaTecla
 
     // El mismo alto, en píxeles: es el que manda en toda la rejilla (filas, teclas
-    // y tamaños de rótulo).
-    private val altoTeclaPx = (altoTecla * contexto.resources.displayMetrics.density).toInt()
+    // y tamaños de rótulo). Es `var` porque el servicio puede pedir que se encoja
+    // para que el teclado entero quepa en la ventana del IME (ver `encoger`).
+    private var altoTeclaPx = (altoTecla * contexto.resources.displayMetrics.density).toInt()
+
+    /**
+     * Hueco vertical entre filas, en píxeles.
+     *
+     * Las filas iban PEGADAS: la barra espaciadora empieza donde termina la fila
+     * de «z x c v b n m», y un toque un par de píxeles alto escribía la «b» en
+     * vez del espacio. Con el hueco, ese toque no cae en ninguna tecla: no
+     * escribe nada y el usuario repite (2026-11-18, lo pidió el usuario: «la
+     * letra b se cuela cuando debe ir un espacio»).
+     */
+    private val huecoPx = (HUECO_DP * contexto.resources.displayMetrics.density).toInt()
+
+    /** Filas que tiene ahora mismo la rejilla (la de números incluida, si está). */
+    private var filasPintadas = 0
     private val mostrarNumeros = ajustes.filaNumeros
     private val vibrador = if (ajustes.vibrar) {
         contexto.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
@@ -92,6 +108,17 @@ class TecladoLetras(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         )
+        // La ventana del IME puede dar MENOS alto del que pide la rejilla, y
+        // Android no avisa: mide el contenedor capado al hueco disponible y
+        // reparte las filas igual, así que la última (espacio y ↵) se sale por
+        // abajo y desaparece. Medido el 2026-11-04 en el MI 8 Pro (Android 10):
+        // 5 filas de 115 px = 575 px en un hueco de 487 → el espacio no se veía,
+        // y el servicio creía que todo cabía (exceso=0) porque suma los hijos
+        // YA capados. Por eso la cuenta se hace AQUÍ dentro, con lo que mide de
+        // verdad la rejilla.
+        contenedor.addOnLayoutChangeListener { _, _, _, _, abajo, _, _, _, viejoAbajo ->
+            if (abajo != viejoAbajo) encajar()
+        }
         pintar()
         return contenedor
     }
@@ -101,6 +128,72 @@ class TecladoLetras(
      * Lo pregunta el servicio para saber cómo escribir una sugerencia.
      */
     fun quiereMayuscula(): Boolean = mayusculas || fijas
+
+    /** Cuántas filas tiene la rejilla pintada (4, o 5 con la fila de números). */
+    fun filas(): Int = filasPintadas
+
+    /**
+     * Vuelve a la página de letras. Lo llama el servicio al aparecer el teclado:
+     * Android REUTILIZA la vista del IME al ocultarla y volver a mostrarla, así que
+     * este objeto sobrevive y `pagina` se quedaba en símbolos: se salía del teclado
+     * estando en `?123` y al regresar seguía en símbolos en vez de en las letras.
+     * Si ya está en letras no toca nada (no repinta de más) y, al cambiar de página,
+     * apaga ⇧/⇪ igual que `cambiarDePagina`.
+     */
+    fun volverALetras() {
+        if (pagina == Pagina.LETRAS) return
+        pagina = Pagina.LETRAS
+        mayusculas = false
+        fijas = false
+        pintarDespues()
+    }
+
+    /**
+     * Encoge cada fila `px` píxeles y repinta, para que el teclado quepa en el
+     * hueco que da el IME. Devuelve false si ya no se puede bajar más.
+     *
+     * Hace falta porque la ventana del teclado no crece todo lo que uno quiera:
+     * con la banda del micrófono y la fila de números, la suma se pasaba y el
+     * espacio y el ↵ quedaban cortados por abajo.
+     */
+    fun encoger(px: Int): Boolean {
+        val minimo = (ALTO_MINIMO_DP * contexto.resources.displayMetrics.density).toInt()
+        val nuevo = (altoTeclaPx - px).coerceAtLeast(minimo)
+        if (nuevo >= altoTeclaPx) return false
+        altoTeclaPx = nuevo
+        pintar()
+        return true
+    }
+
+    /**
+     * Encoge las filas, por dentro, si la rejilla no cabe en el alto que le dio
+     * el IME.
+     *
+     * Cada fila mide `altoTeclaPx` exactos (ver `construirFila`), así que lo que
+     * necesita la rejilla es `filas × altoTeclaPx`. Si eso pasa del alto real
+     * del contenedor, se reparte lo que falta entre todas las filas.
+     *
+     * Se repite sola: `encoger()` repinta, el repintado cambia el layout y este
+     * listener vuelve a medir; cuando ya cabe, `falta` es 0 y para. `encoger()`
+     * corta en ALTO_MINIMO_DP, así que tampoco puede encogerse sin fin.
+     */
+    private fun encajar() {
+        if (filasPintadas <= 0) return
+        val dado = contenedor.height
+        if (dado <= 0) return
+        // Cada fila mide `altoTeclaPx` y entre ellas hay `huecoPx` (la última no
+        // lleva hueco debajo).
+        val alto = filasPintadas * altoTeclaPx + huecoPx * (filasPintadas - 1)
+        val falta = alto - dado
+        Log.d(
+            ETIQUETA,
+            "rejilla: filas=$filasPintadas altoTecla=$altoTeclaPx hueco=$huecoPx " +
+                "dado=$dado falta=$falta"
+        )
+        if (falta <= 0) return
+        val porFila = (falta + filasPintadas - 1) / filasPintadas
+        contenedor.post { encoger(porFila) }
+    }
 
     /**
      * El servicio avisa de si la próxima palabra va en mayúscula (empezó oración,
@@ -119,15 +212,24 @@ class TecladoLetras(
     private fun pintar() {
         contenedor.removeAllViews()
         teclas.clear()
-        when (pagina) {
+        filasPintadas = 0
+        val filas = when (pagina) {
             // La fila de números arriba es opcional (en las páginas de símbolos ya está).
-            Pagina.LETRAS -> {
-                if (mostrarNumeros) contenedor.addView(construirFila(FILA_NUMEROS))
-                for (fila in FILAS_LETRAS) contenedor.addView(construirFila(fila))
+            Pagina.LETRAS -> if (mostrarNumeros) {
+                listOf(FILA_NUMEROS) + FILAS_LETRAS
+            } else {
+                FILAS_LETRAS
             }
-            Pagina.SIMBOLOS -> for (fila in FILAS_SIMBOLOS) contenedor.addView(construirFila(fila))
-            Pagina.MAS -> for (fila in FILAS_MAS) contenedor.addView(construirFila(fila))
+            Pagina.SIMBOLOS -> FILAS_SIMBOLOS
+            Pagina.MAS -> FILAS_MAS
         }
+        // Todas las filas llevan hueco debajo menos la última: así el toque que
+        // se queda corto al buscar el espacio no escribe la letra de encima.
+        filas.forEachIndexed { indice, fila ->
+            val hueco = if (indice == filas.lastIndex) 0 else huecoPx
+            contenedor.addView(construirFila(fila, hueco))
+        }
+        filasPintadas = filas.size
     }
 
     /**
@@ -174,7 +276,7 @@ class TecladoLetras(
         }
     }
 
-    private fun construirFila(fila: List<Pair<String, Float>>): View {
+    private fun construirFila(fila: List<Pair<String, Float>>, huecoPx: Int = 0): View {
         val linea = LinearLayout(contexto)
         linea.orientation = LinearLayout.HORIZONTAL
         linea.weightSum = 10f
@@ -183,7 +285,7 @@ class TecladoLetras(
         // esa franja de fondo era la que se veía fea al lado de esas filas.
         linea.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, altoTeclaPx
-        )
+        ).apply { bottomMargin = huecoPx }
         for ((nombre, peso) in fila) {
             linea.addView(construirTecla(nombre, peso))
         }
@@ -288,11 +390,13 @@ class TecladoLetras(
     /**
      * Fondo de una tecla según su papel: la espaciadora es la única con
      * contorno; las de función van más oscuras y, si el ⇧ está encendido, en
-     * verde tenue; las letras, en el gris normal.
+     * verde tenue; el ↵ lleva su propio verde tenue (el mismo del icono, ver
+     * ic_enter.xml); las letras, en el gris normal.
      */
     private fun fondoDeTecla(nombre: String): Int = when {
         nombre == "MAYUS" && (mayusculas || fijas) -> R.drawable.forma_tecla_activa
         nombre == "espacio" -> R.drawable.fondo_espacio
+        nombre == "ENTER" -> R.drawable.fondo_enter
         nombre in TECLAS_ESPECIALES -> R.drawable.fondo_tecla_especial
         else -> R.drawable.fondo_boton
     }
@@ -497,8 +601,17 @@ class TecladoLetras(
     }
 
     companion object {
+        /** Etiqueta del registro, la misma que usa el servicio (`logcat -s DictadoIME`). */
+        private const val ETIQUETA = "DictadoIME"
+
         /** Vibración al pulsar, en milisegundos. */
         private const val VIBRACION_MS = 15L
+
+        /** Lo mínimo a lo que se puede encoger una fila (dp). */
+        private const val ALTO_MINIMO_DP = 28
+
+        /** Hueco entre filas (dp). Un toque en él no escribe nada. */
+        private const val HUECO_DP = 4
 
         /** Etiquetas que la tipografía dibuja pequeñas y por eso van más grandes.
          *  El ↵ no está: esa tecla lleva un dibujo (ver `construirTecla`). */
