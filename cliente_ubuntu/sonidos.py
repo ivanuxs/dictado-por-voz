@@ -51,12 +51,48 @@ def _alarma():
     )
 
 
-def _listo():
-    """Ding ascendente (fin de dictado)."""
+def _inicio():
+    """Ding ascendente: el micrófono se abrió y está escuchando."""
     return _tono(1318.51, 0.12) + _silencio(0.03) + _tono(1760.0, 0.28)
 
 
-_GENERADORES = {"alarma": _alarma, "listo": _listo}
+def _fin():
+    """Ding descendente: dictado terminado, el texto ya está entregado."""
+    return _tono(1760.0, 0.12) + _silencio(0.03) + _tono(1318.51, 0.30)
+
+
+def _error():
+    """Dos tonos graves y cortos: algo no salió bien."""
+    return (
+        _tono(392.0, 0.14, amplitud=0.45) + _silencio(0.07) +
+        _tono(311.13, 0.22, amplitud=0.45) + _silencio(0.04)
+    )
+
+
+def _texto():
+    """Pip corto y agudo: el texto ya está en el portapapeles."""
+    return _tono(1046.5, 0.12, amplitud=0.45) + _silencio(0.03)
+
+
+def _orden():
+    """Dos pips dobles: se reconoció una orden y se ejecuta en el cliente."""
+    return (
+        _tono(1568.0, 0.07, amplitud=0.45) + _silencio(0.02) +
+        _tono(1568.0, 0.07, amplitud=0.45) + _silencio(0.02)
+    )
+
+
+_GENERADORES = {
+    "alarma": _alarma,
+    "inicio": _inicio,
+    "fin": _fin,
+    "texto": _texto,
+    "orden": _orden,
+    "error": _error,
+    # «listo» se mantiene como alias de «inicio»: es el nombre que usaba el
+    # cliente antes de separar inicio y fin, y el que conoce el de Windows.
+    "listo": _inicio,
+}
 
 
 def _obtener_wav(nombre):
@@ -76,7 +112,7 @@ def _obtener_wav(nombre):
 
 
 def reproducir_sonido(nombre):
-    """Reproduce un sonido ('alarma' o 'listo').
+    """Reproduce un sonido: 'alarma', 'inicio', 'fin', 'texto', 'orden' o 'error'.
 
     Windows: winsound. Linux: paplay.
     """

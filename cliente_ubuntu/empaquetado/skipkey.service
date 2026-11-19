@@ -1,0 +1,21 @@
+[Unit]
+Description=SkipKey — dictado por voz (audio, texto, comandos)
+After=default.target sound.target network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/skipkey/skipkey
+Restart=on-failure
+RestartSec=5
+
+# NO se fija DISPLAY: en Wayland la autorización de Xwayland es
+# /run/user/<uid>/.mutter-Xwaylandauth.XXXXXX y cambia en cada sesión.
+# systemd --user la importa al entrar, así que se hereda sola.
+# %U es el uid del usuario del servicio (no un 1000 fijo).
+Environment=PULSE_RUNTIME_PATH=/run/user/%U/pulse
+
+# Clave de DeepSeek, fuera del paquete.
+EnvironmentFile=-%h/.config/cliente-voz.env
+
+[Install]
+WantedBy=default.target

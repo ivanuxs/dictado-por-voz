@@ -1,4 +1,4 @@
-# Cliente de Dictado por Voz — Windows 10
+# Cliente de SkipKey — Windows 10
 
 Producto final de **un solo archivo** (`ClienteVoz.exe`) que convierte una PC
 Windows 10 en un **cliente dedicado** del servidor de dictado (la dirección del
@@ -92,6 +92,96 @@ borra la carpeta donde está el exe.
   (`servidor_voz.py` y `protocolo.py`): con un servidor viejo el cliente sigue
   funcionando, pero el texto se pega recién al terminar de dictar.
 - La ventanita roja **REC** aparece mientras grabas.
+
+### Dictado por palabra clave (Vosk)
+
+Con `"escucha_local": true` en `comandos_windows.json`, el cliente oye la palabra
+clave con **Vosk** —el mismo motor que el cliente de Ubuntu y el teclado de
+Android— y abre el dictado solo, sin tocar `Ctrl+Espacio`.
+
+**Antes hacía falta el paquete de voz de Windows y `pywin32`; ya no.** SAPI
+resultó inviable: en un equipo sin motor de reconocimiento instalado,
+`CreateRecoContext` falla, y aunque lo haya, se pelea por el micrófono con la
+captura del cliente. Vosk se alimenta con los mismos chunks que el cliente ya
+está grabando, así que no abre el micrófono por su cuenta.
+
+**Requisito**: el modelo, copiado junto al `.exe` (58 MB):
+
+```
+ClienteVoz.exe
+vosk-model-es\vosk-model-small-es-0.42\
+```
+
+(puede estar también en `vosk-model-small-es-0.42\` al lado del exe, o un nivel
+más arriba en `vosk-model-es\`). Si no lo encuentra, el log lo dice y el dictado
+por tecla sigue funcionando.
+
+Palabras configurables en el JSON:
+
+```json
+"clave": "computadora",
+"frase_fin": ["fin del dictado", "fin de dictado", "finalización del dictado"]
+```
+
+- Cualquiera de las frases de `frase_fin` cierra el dictado. `frase_fin` puede
+  ser una cadena suelta o una lista.
+- Una **pausa al hablar no cierra nada**: el dictado termina cuando dices la
+  frase. Quedan dos seguros: 6 s sin haber dicho nada desde el pitido (un
+  disparo por error se cierra solo) y un tope de 180 s.
+- La frase de cierre la **quita el propio cliente** del final del texto. Al
+  servidor solo se le pide que marque el dictado como de voz; no sabe qué frase
+  se dijo.
+
+Cuatro sonidos, todos generados por código:
+
+| Momento | Sonido |
+|---|---|
+| Se oye la palabra clave | ding **ascendente** (`inicio`) |
+| Se oye la frase de cierre | ding **descendente** (`fin`) |
+| El texto ya está en el portapapeles | **pip corto** (`texto`) |
+| Un aviso o un fallo | dos tonos graves (`error`) |
+
+### Icono en el área de notificación
+
+El cliente pone un icono en el área de notificación (junto al reloj) con un menú
+para lo que no se puede hacer con la tecla activadora:
+
+| Elemento del menú | Para qué sirve |
+|---|---|
+| ☑ **Escucha continua (palabra clave)** | Enciende o apaga la escucha de SAPI en caliente |
+| ☑ **Comandos por voz** | **Pausa los comandos**: lo que dictes se escribe como texto, sin ejecutar acciones |
+| **Dictar ahora** | Empieza o termina un dictado sin tocar `Ctrl+Espacio` |
+| **Ver registro** | Abre la carpeta de registros del cliente |
+| **Salir** | Cierra el cliente |
+
+El icono es un círculo con un micrófono y cambia de color:
+
+| Color | Estado |
+|---|---|
+| gris | escucha apagada |
+| verde | esperando la palabra clave |
+| ámbar | escucha activa pero comandos en pausa |
+| rojo | grabando |
+
+**Si no ves el icono:**
+
+1. **Windows 11 lo esconde.** Los iconos nuevos van dentro de la **flecha `^`**
+   del área de notificación. Se activan en Configuración → Personalización →
+   Barra de tareas → **Otros iconos del sistema** → «SkipKey».
+2. **Falta `pystray` o `Pillow`** en el entorno de compilación. Ahora el cliente
+   avisa con un cuadro de diálogo y con el sonido de error, y el registro dice
+   `[BANDEJA] sin icono en la bandeja: falta pystray o Pillow`.
+3. **El `.exe` es anterior a `bandeja.py`.** Vuelve a compilarlo con
+   `construir_exe_windows.bat`.
+
+Para comprobarlo sin arrancar el cliente entero:
+
+```bat
+ClienteVoz.exe --probar-bandeja 30
+```
+
+Pone el icono y lo retira a los 30 s. Si aparece, el icono funciona y el
+problema está en otro sitio; si no aparece, el aviso dirá qué falta.
 
 ### Comandos de voz (con "computadora")
 

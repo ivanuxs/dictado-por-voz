@@ -6,15 +6,18 @@ Formato: cada mensaje son 2 frames ZMQ:
 
 Tipos soportados (cliente → servidor):
   AUDIO         — chunk de audio int16 16kHz mono
-  DICTADO_START — iniciar buffer para Whisper (payload b"vivo" = dictado en vivo)
+  DICTADO_START — iniciar buffer para Whisper. El payload es una lista de
+                  banderas separadas por comas: `vivo` (texto por frases, con
+                  modelo opcional tras «:») y `voz` (el TEXTO sale marcado).
   DICTADO_STOP  — transcribir buffer con Whisper
   PING          — keepalive
 
 Tipos soportados (servidor → cliente):
-  TEXTO          — texto transcrito (Whisper)
+  TEXTO          — texto transcrito (Whisper). Si el dictado fue de voz, lleva
+                   marcas para el cliente: `§` tras la clave, `¬` tras el
+                   verbo o frase de sistema y `¶` al final (ver marcas.py).
   TEXTO_PARCIAL  — frase transcrita del dictado en vivo (escribir mientras habla)
   FIN_DICTADO    — fin del dictado en vivo (ya no llegan más frases)
-  COMANDO        — comando de voz detectado (Vosk)
   PONG           — respuesta keepalive
   ESTADO         — mensaje de estado/error
 """
@@ -24,8 +27,14 @@ import numpy as np
 # Chunk de audio: 1024 muestras a 16kHz = 64 ms
 CHUNK_MUESTRAS = 1024
 
-# Payload de DICTADO_START que pide dictado en vivo (escribir mientras habla)
+# Banderas del payload de DICTADO_START (separadas por comas; cada una admite
+# un modelo tras «:», p. ej. b"voz,vivo:medium").
+#   vivo — dictado en vivo: el servidor devuelve el texto por frases
+#   voz  — el TEXTO vuelve con marcas para que el cliente ejecute la acción,
+#          aunque la palabra clave se la haya comido el motor local.
+#          `voz:fin` pide además quitar del final la frase de cierre.
 MODO_VIVO = b"vivo"
+MODO_VOZ = b"voz"
 
 # Tipos de mensaje (como bytes para eficiencia)
 AUDIO = b"AUDIO"
@@ -34,7 +43,6 @@ DICTADO_STOP = b"DICTADO_STOP"
 TEXTO = b"TEXTO"
 TEXTO_PARCIAL = b"TEXTO_PARCIAL"
 FIN_DICTADO = b"FIN_DICTADO"
-COMANDO = b"COMANDO"
 PING = b"PING"
 PONG = b"PONG"
 ESTADO = b"ESTADO"
@@ -61,6 +69,22 @@ def crear_dictado_start_vivo():
     return [DICTADO_START, MODO_VIVO]
 
 
+def crear_dictado_start_voz(vivo=False, fin=True):
+    """Inicia un dictado de voz: el TEXTO vuelve con marcas (§ ¬ ¶).
+
+    Lo usa el cliente cuando la palabra clave la detecta un motor local: el
+    servidor no la va a oír en el audio, así que se le dice que marque. Se pide
+    `voz:fin` porque la frase de cierre («fin del dictado») también la oye el
+    motor local, y el servidor tiene que quitarla del final.
+
+    `fin=False` pide las marcas **sin** el recorte de la frase de cierre: lo usa
+    el cliente que detecta la frase y la quita él mismo del texto.
+    """
+    marcas = MODO_VOZ + (b":fin" if fin else b"")
+    banderas = MODO_VIVO + b"," + marcas if vivo else marcas
+    return [DICTADO_START, banderas]
+
+
 def crear_dictado_stop():
     return [DICTADO_STOP, b""]
 
@@ -81,10 +105,6 @@ def crear_texto_parcial(texto):
 def crear_fin_dictado():
     """Aviso de que el dictado en vivo terminó (no vendrán más frases)."""
     return [FIN_DICTADO, b""]
-
-
-def crear_comando(texto):
-    return [COMANDO, texto.encode("utf-8")]
 
 
 def crear_pong():

@@ -10,6 +10,8 @@ from datetime import datetime
 
 import edge_tts
 
+from utils_logging import imprimir
+
 VOZ = "es-MX-DaliaNeural"
 
 # Respuestas predefinidas para comandos simples
@@ -45,10 +47,22 @@ def _buscar_comando_simple(texto):
 
 
 def hablar(texto):
-    """Habla el texto usando edge-tts (bloquea hasta terminar)."""
+    """Habla el texto usando edge-tts (bloquea hasta terminar).
+
+    Devuelve True si se reprodujo. Un fallo **no** se silencia: queda en el
+    registro. Antes se tragaba con `except Exception: pass` y el síntoma era el
+    peor posible: el cliente decía «Respuesta local a…» en el log y el usuario
+    solo veía que no respondía nada (pasó el 2026-11-05: `edge-tts` 7.2.8 daba
+    403 al servicio de Microsoft y había que subir a 7.3.1).
+    """
     if not texto or not texto.strip():
-        return
-    asyncio.run(_hablar_async(texto))
+        return False
+    try:
+        asyncio.run(_hablar_async(texto))
+        return True
+    except Exception as e:
+        imprimir(f"[TTS] No se pudo hablar: {type(e).__name__}: {e}")
+        return False
 
 
 async def _hablar_async(texto):
@@ -58,8 +72,6 @@ async def _hablar_async(texto):
         communicate = edge_tts.Communicate(texto, VOZ)
         await communicate.save(tmp)
         _reproducir_mp3(tmp)
-    except Exception:
-        pass
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)

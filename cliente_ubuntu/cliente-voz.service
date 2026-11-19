@@ -1,0 +1,25 @@
+[Unit]
+Description=Dictado por voz (escritorio) — captura audio, inyecta texto, ejecuta comandos
+After=default.target sound.target network.target
+Wants=default.target sound.target network.target
+
+[Service]
+Type=simple
+# %h se expande al directorio home del usuario que ejecuta el servicio.
+# Antes de instalarlo, ajusta la carpeta del proyecto y la IP del servidor.
+ExecStart=/usr/bin/bash -c "exec \"%h/Nextcloud/Proyectos/SkipKey/entorno_dictado/bin/python3\" \"%h/Nextcloud/Proyectos/SkipKey/cliente_ubuntu/cliente_voz.py\" --servidor 127.0.0.1:5555"
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+# NO fijar XAUTHORITY aquí: en Wayland (GNOME) la autorización de Xwayland es
+# /run/user/<uid>/.mutter-Xwaylandauth.XXXXXX y cambia en cada sesión. Con
+# XAUTHORITY=%h/.Xauthority el cliente no arranca («Authorization required, but
+# no authorization protocol specified»). systemd --user ya la importa al entrar,
+# así que se hereda.
+Environment=PULSE_RUNTIME_PATH=/run/user/1000/pulse
+# Clave de DeepSeek y dirección del servidor, fuera del repositorio.
+# Crear el archivo con:  cp .env.example ~/.config/cliente-voz.env
+EnvironmentFile=-%h/.config/cliente-voz.env
+
+[Install]
+WantedBy=default.target

@@ -7,11 +7,18 @@ sounddevice
 pynput
 pyautogui
 pyperclip
-edge-tts
+edge-tts>=7.3.1
 requests
 pycaw
 comtypes
 pygame
+
+# Icono en el área de notificación del cliente (bandeja.py)
+pystray
+Pillow
+# Detección local de la palabra clave y de las órdenes (escucha_local.py).
+# El modelo `base` (~142 MB) va dentro del ejecutable.
+faster-whisper
 
 # Herramienta para generar el producto final (ClienteVoz.exe)
 pyinstaller

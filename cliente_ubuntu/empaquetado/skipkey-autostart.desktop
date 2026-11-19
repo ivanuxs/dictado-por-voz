@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=SkipKey
+Comment=Arranca el dictado por voz al iniciar sesión
+# Un .deb no puede activar un servicio de usuario (dpkg corre como root, sin
+# sesión), así que el arranque se pide desde aquí. `start` es idempotente: si
+# el usuario ya hizo `systemctl --user enable skipkey`, no arranca dos veces.
+Exec=systemctl --user start skipkey.service
+Terminal=false
+NoDisplay=true
+Hidden=false
+X-GNOME-Autostart-enabled=true

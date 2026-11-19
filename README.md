@@ -1,9 +1,13 @@
-# Dictado por Voz
+# SkipKey
 
-Herramienta de dictado por voz para Linux (con cliente para Windows) que **transcribe tu voz a texto** y además **ejecuta comandos del sistema** hablando. Está pensada para funcionar entre dos computadoras en la misma red local.
+**SkipKey** es la aplicación de dictado por voz: clientes para **Linux** y **Windows** que
+**transcriben tu voz a texto** y además **ejecutan comandos del sistema** hablando, y un
+**teclado para Android** que dicta desde el celular. Está pensada para funcionar entre dos
+computadoras en la misma red local.
 
 - En la **computadora del usuario (cliente)** se captura el micrófono, se detecta la tecla activadora y se inyecta el texto en la aplicación que tengas abierta.
-- En la **computadora de procesamiento (servidor)** se hace el trabajo pesado: detección de palabras clave con **Vosk** y transcripción con **Whisper**.
+- En la **computadora de procesamiento (servidor)** se hace el trabajo pesado: la transcripción con **faster-whisper** (`large-v3` en GPU).
+- La **palabra clave** se detecta **en el cliente**, con faster-whisper `base`; el servidor no escucha ni sabe de comandos.
 
 ---
 
@@ -13,7 +17,7 @@ Herramienta de dictado por voz para Linux (con cliente para Windows) que **trans
 2. [Arquitectura](#arquitectura)
 3. [Requisitos](#requisitos)
 4. [Instalación del cliente (Linux)](#instalación-del-cliente-linux)
-5. [Descarga del modelo Vosk](#descarga-del-modelo-vosk)
+5. [Paquete instalable (otras máquinas)](#paquete-instalable-otras-máquinas)
 6. [Configuración](#configuración)
 7. [Uso](#uso)
 8. [Comandos de voz](#comandos-de-voz)
@@ -32,8 +36,8 @@ Herramienta de dictado por voz para Linux (con cliente para Windows) que **trans
 - **Dictado por voz**: el texto reconocido se inyecta en la ventana activa con el portapapeles (`pyperclip` + `pyautogui`).
 - **Comandos de voz**: abre y cierra aplicaciones, controla el volumen y la multimedia, captura la pantalla, bloquea la sesión y programa alarmas.
 - **Asistente de voz (TTS)**: responde en voz alta con `edge-tts` (hora, fecha, saludos y, opcionalmente, consultas a DeepSeek).
-- **Múltiples teclas activadoras**: `ctrl+space` y **el botón del auricular Bluetooth** (lleva por AVRCP: el cliente publica un reproductor MPRIS «Dictado por Voz» que lo recibe), más las que quieras añadir.
-- **Dos modos de activación**: *toggle* (un clic para empezar, otro para detener) o *mantener* (mantenés la tecla mientras hablas).
+- **Múltiples teclas activadoras**: `ctrl+space` y **el botón del auricular Bluetooth** (lleva por AVRCP: el cliente publica un reproductor MPRIS «SkipKey» que lo recibe), más las que quieras añadir.
+- **Dos modos de activación**: *toggle* (un clic para empezar, otro para detener) o *mantener* (mantienes la tecla mientras hablas).
 - **Indicador visual**: una ventana flotante muestra cuando se está grabando.
 - **Modo escucha continua**: el servidor puede activar la grabación al detectar la palabra clave.
 - **Dictado desde el celular**: teclado propio para Android que dicta contra el mismo servidor, incluso con datos móviles (ver [Cliente Android y puente web](#cliente-android-y-puente-web)).
@@ -106,39 +110,83 @@ sudo apt install python3-venv ffmpeg
 
 ```bash
 # 1. Clona el repositorio
-git clone https://github.com/TU_USUARIO/dictado-por-voz.git
-cd dictado-por-voz
+git clone https://github.com/ivanuxs/dictado-por-voz.git SkipKey
+cd SkipKey
 
 # 2. Crea el entorno virtual e instala las dependencias
 python3 -m venv entorno_dictado
 ./entorno_dictado/bin/pip install --upgrade pip
-./entorno_dictado/bin/pip install -r requirements.txt
+./entorno_dictado/bin/pip install -r cliente_ubuntu/requirements.txt
 ```
 
 > **Nota:** la carpeta `entorno_dictado/` está excluida por `.gitignore`. Crea la tuya; no la compartas entre computadoras, porque las rutas internas se rompen.
 
 ---
 
-## Descarga del modelo Vosk
+## Paquete instalable (otras máquinas)
 
-El modelo de voz pesa más de 2 GB y **no está incluido en el repositorio**. Descárgalo y colócalo en la raíz del proyecto (y también en el servidor):
+El cliente se compila a un binario: **no se reparte código** ni hace falta Python en la
+máquina destino. Se generan dos formatos desde el mismo binario.
+
+### `.deb` (recomendado en Ubuntu 22.04 o superior)
 
 ```bash
-# Modelo en español (elige el que necesites)
-wget https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip
-unzip vosk-model-small-es-0.42.zip -d vosk-model-es
+sudo apt install ./skipkey_1.0.0_amd64.deb
+systemctl --user start skipkey      # arrancarlo ahora
 ```
 
-Estructura esperada:
+`apt` resuelve solo las dependencias del sistema (GTK, AppIndicator, dbus, ffmpeg, xclip,
+scrot, xdotool). Al entrar en la sesión arranca sin hacer nada más.
 
+| Qué | Dónde |
+|---|---|
+| Programa (binario + librerías) | `/opt/skipkey/` |
+| Configuración editable | `~/.config/skipkey/comandos.json` |
+| Registros | `~/.local/state/skipkey/logs/` |
+| Unidad de usuario | `/usr/lib/systemd/user/skipkey.service` |
+
+Desinstalar: `sudo apt remove skipkey`. La configuración y los registros **no** se borran
+(están en tu `$HOME`); elimínalos a mano si quieres dejarlo limpio.
+
+### AppImage (otras distribuciones, o sin instalar nada)
+
+```bash
+chmod +x skipkey-1.0.0-x86_64.AppImage
+./skipkey-1.0.0-x86_64.AppImage
 ```
-vosk-model-es/
-└── vosk-model-small-es-0.42/
-    ├── am/
-    ├── conf/
-    ├── graph/
-    └── ivector/
+
+Un solo archivo, sin root. Sigue necesitando en el sistema `libgtk-3`,
+`libayatana-appindicator3`, `libdbus-1-3`, `ffmpeg` y `xclip` (un AppImage no puede llevar
+GTK dentro sin romper el tema ni la bandeja), y en **Ubuntu 24.04** hace falta
+`libfuse2t64` o ejecutarlo con `--appimage-extract-and-run`.
+
+### Notas de los dos formatos
+
+- **Tamaño medido**: `.deb` 127 MB y `.AppImage` 166 MB (instalado, 570 MB en `/opt`).
+  El peso son las librerías de la escucha local (`ctranslate2` 72 MB, `onnxruntime` 44 MB,
+  `numpy` + OpenBLAS 40 MB, los códecs que trae PyAV ~60 MB) y el binario compilado a código
+  nativo con Nuitka (260 MB sin comprimir). Si se quiere un paquete del tamaño del `.exe` de
+  Windows (~58 MB) hay que empaquetar con PyInstaller en vez de Nuitka, a cambio de que el
+  bytecode se pueda extraer.
+- El binario **no incluye el modelo de voz**: faster-whisper `base` (~142 MB) se descarga la
+  primera vez que se usa. Sin internet en ese momento, la tecla activadora funciona igual.
+- Se compila en **Ubuntu 22.04** a propósito: así corre también en 24.04 y 25.x (lo
+  compilado en una versión nueva no arranca en una vieja).
+
+### Para construirlo
+
+```bash
+bash cliente_ubuntu/empaquetado/construir_binario.sh            # VERSION=1.1.0 bash ...
 ```
+
+Compila con **Nuitka** dentro de un contenedor `ubuntu:22.04` (hace falta Docker) y deja en
+`cliente_ubuntu/empaquetado/salida/` el `.deb` y el `.AppImage`. La primera compilación
+tarda entre 30 y 60 minutos; las siguientes aprovechan la caché.
+
+El cliente empaquetado corre en **un solo ejecutable**: los procesos hijos (icono de la
+barra, reproductor MPRIS y ventana de configuración) se lanzan con banderas internas del
+propio binario (`--bandeja`, `--mpris`, `--ventana`), porque en el paquete no hay scripts
+sueltos ni un Python del sistema con `gi`/`dbus`.
 
 ---
 
@@ -158,7 +206,7 @@ Si no defines ninguno, se usa `127.0.0.1:5555` (útil si cliente y servidor est�
 
 ### 2. Teclas y comandos
 
-Edita `comandos.json`:
+Edita `cliente_ubuntu/comandos.json`:
 
 ```json
 {
@@ -181,7 +229,7 @@ Edita `comandos.json`:
   (envía «colgar»), así que el botón no puede activar el dictado. También acepta `""` o
   `"default"` (el del sistema), un número (índice de `sounddevice`) o parte del nombre del
   dispositivo.
-- `boton_auricular_bluetooth`: `true` publica un reproductor MPRIS «Dictado por Voz» para que
+- `boton_auricular_bluetooth`: `true` publica un reproductor MPRIS «SkipKey» para que
   el botón del auricular active el dictado. Viene en `false` porque **solo conviene con un
   auricular dedicado a la computadora**: con uno **multipunto** (también emparejado al celular),
   el celular se queda con el botón en cuanto hay una llamada y desde la PC no se recupera. Con
@@ -193,7 +241,7 @@ Edita `comandos.json`:
 ### 3. Clave de DeepSeek (opcional)
 
 ```bash
-cp .env.example .env
+cp cliente_ubuntu/.env.example .env
 # Edita .env y coloca tu clave
 ```
 
@@ -202,7 +250,7 @@ Si no defines `DEEPSEEK_API_KEY`, el asistente solo responde los comandos simple
 Si usas `systemd`, la clave se pasa por un archivo aparte que **no** está en el repositorio:
 
 ```bash
-cp .env.example ~/.config/cliente-voz.env
+cp cliente_ubuntu/.env.example ~/.config/cliente-voz.env
 chmod 600 ~/.config/cliente-voz.env
 ```
 
@@ -214,10 +262,10 @@ chmod 600 ~/.config/cliente-voz.env
 
 ```bash
 # Servidor en otra computadora de la red
-./entorno_dictado/bin/python3 cliente_voz.py --servidor 192.168.1.50:5555
+./entorno_dictado/bin/python3 cliente_ubuntu/cliente_voz.py --servidor 192.168.1.50:5555
 
 # Cliente y servidor en la misma computadora
-./entorno_dictado/bin/python3 cliente_voz.py
+./entorno_dictado/bin/python3 cliente_ubuntu/cliente_voz.py
 ```
 
 ### Como servicio de usuario (`systemd`)
@@ -226,7 +274,7 @@ Se ejecuta como usuario (no como `root`) porque necesita acceso a la pantalla, a
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp cliente-voz.service ~/.config/systemd/user/
+cp cliente_ubuntu/cliente-voz.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable cliente-voz.service
 systemctl --user start cliente-voz.service
@@ -243,13 +291,36 @@ journalctl --user -u cliente-voz -f       # Ver el registro en vivo
 
 > **Antes de copiar el servicio**, edita `cliente-voz.service` y ajusta la ruta del proyecto y la IP del servidor.
 
+### Icono en la barra superior
+
+El cliente pone un icono en la barra superior de Ubuntu (AppIndicator) con un menú
+para lo que no se puede hacer con la tecla activadora:
+
+| Elemento del menú | Para qué sirve |
+|---|---|
+| ☑ **Escucha continua (palabra clave)** | Enciende o apaga la escucha local (faster-whisper) |
+| ☑ **Comandos por voz** | **Pausa los comandos**: lo que dictes se pega como texto, sin ejecutar acciones |
+| **Dictar ahora** | Empieza o termina un dictado sin tocar `Ctrl+Espacio` |
+| **Ver registro** | Abre la carpeta de registros del cliente |
+| **Salir** | Cierra el cliente |
+
+El icono cambia de color: gris (escucha apagada), verde (esperando la palabra
+clave), ámbar (comandos en pausa) y rojo (grabando).
+
+Necesita la extensión `ubuntu-appindicators@ubuntu.com` (viene activa en Ubuntu) y
+que GTK3 funcione. Si no quieres el icono, pon `"bandeja": false` en
+`cliente_ubuntu/comandos.json`.
+
 ### Registro de la aplicación
 
 ```bash
-tail -f logs/registro_cliente_voz.log
+tail -f ~/.local/state/skipkey/logs/registro_cliente_voz.log
 ```
 
-Al arrancar, el cliente mueve el registro anterior a `logs/historial/` con marca de tiempo y empieza un archivo limpio, para que los registros no crezcan sin control.
+Los registros viven en `~/.local/state/skipkey/logs/` (en Linux, siguiendo el estándar XDG),
+tanto con el paquete instalado como en modo fuente. Al arrancar, el cliente mueve el registro
+anterior a `historial/` con marca de tiempo y empieza un archivo limpio, para que no crezcan
+sin control. En Windows siguen junto al `.exe`.
 
 ---
 
@@ -346,27 +417,32 @@ ZMQ local.
 ## Estructura del proyecto
 
 ```
-dictado-por-voz/
-├── cliente_voz.py              # Cliente ZMQ: micrófono, teclado, inyección de texto, comandos
-├── mpris_dictado.py            # Reproductor MPRIS «Dictado por Voz» (botón del auricular Bluetooth)
-├── senal_cliente.py            # Manda SIGUSR1/SIGUSR2 al cliente en ejecución (compartido)
-├── cliente-voz.service         # Servicio systemd del cliente (plantilla)
-├── comandos.json               # Comandos de voz y teclas activadoras
-├── voz_asistente.py            # TTS (edge-tts) y consultas a DeepSeek
-├── indicador_grabacion.py      # Ventana flotante "REC" (Tkinter)
-├── sonidos.py                  # Generación de sonidos de aviso
-├── protocolo.py                # Tipos de mensaje ZMQ (compartido)
-├── utils_logging.py            # Utilidades de registro (compartido)
-├── requirements.txt            # Dependencias del cliente
-├── .env.example                # Plantilla de variables de entorno
-├── AGENTS.md                   # Notas de desarrollo del proyecto
+SkipKey/
+├── cliente_ubuntu/             # Cliente de Ubuntu/Linux (esta PC)
+│   ├── cliente_voz.py          # Cliente ZMQ: micrófono, teclado, inyección de texto, comandos
+│   ├── mpris_dictado.py        # Reproductor MPRIS «SkipKey» (botón del auricular Bluetooth)
+│   ├── senal_cliente.py        # Manda SIGUSR1/SIGUSR2 al cliente en ejecución
+│   ├── cliente-voz.service     # Servicio systemd del cliente (plantilla)
+│   ├── comandos.json           # Comandos de voz y teclas activadoras
+│   ├── voz_asistente.py        # TTS (edge-tts) y consultas a DeepSeek
+│   ├── indicador_grabacion.py  # Ventana flotante "REC" (Tkinter)
+│   ├── marcas.py               # Intérprete de las marcas del dictado
+│   ├── sonidos.py              # Generación de sonidos de aviso
+│   ├── protocolo.py            # Tipos de mensaje ZMQ (compartido)
+│   ├── utils_logging.py        # Utilidades de registro (compartido)
+│   ├── requirements.txt        # Dependencias del cliente
+│   ├── .env.example            # Plantilla de variables de entorno
+│   ├── empaquetado/            # Compilación con Nuitka e instalador del paquete
+│   └── logs/                   # Registros antiguos (hoy van a ~/.local/state/skipkey)
 ├── cliente_windows/            # Cliente y empaquetado para Windows
-├── puente_web/                 # Puente HTTPS/WSS hacia el servidor (para Android)
 ├── cliente_android/            # Teclado (IME) de Android en Kotlin
+├── puente_web/                 # Puente HTTPS/WSS hacia el servidor (para Android)
+├── AGENTS.md                   # Notas de desarrollo del proyecto
+├── entorno_dictado/            # Entorno virtual del cliente Ubuntu (excluido de Git)
 ├── entorno_web/                # Entorno virtual del puente (excluido de Git)
 ├── scratch/                    # Scripts de diagnóstico
-├── logs/                       # Registros (excluidos de Git)
-└── vosk-model-es/              # Modelo de voz (excluido de Git)
+├── resguardos/                 # Archivos retirados (código viejo)
+└── vosk-model-es/              # Modelos Vosk antiguos (2,3 GB, ya sin uso)
 ```
 
 ---

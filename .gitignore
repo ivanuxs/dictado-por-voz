@@ -1,7 +1,6 @@
 # ─────────────────────────────────────────────────────────────
 # Entornos virtuales (nunca versionar: son específicos de cada PC)
 # ─────────────────────────────────────────────────────────────
-entorno_dictado/
 entorno_web/
 .venv/
 venv/
@@ -9,14 +8,17 @@ env/
 ENV/
 
 # ─────────────────────────────────────────────────────────────
-# Modelos de voz (pesan más de 2 GB; se descargan aparte)
-# Ver README.md → "Descarga del modelo Vosk"
+# Modelos de voz y de traducción (Opus-MT convertidos a CTranslate2, ~80 MB
+# cada uno). Se generan con puente_web/herramientas/preparar_modelos.py.
+# Las licencias SÍ se versionan (modelos/LICENCIAS.md).
 # ─────────────────────────────────────────────────────────────
-vosk-model-es/
-vosk-model-es-*/
-vosk-model-small-es-*/
-vosk-model-*/
 *.model
+puente_web/modelos/*
+!puente_web/modelos/LICENCIAS.md
+
+# Base de datos de cuentas del puente (correos, hashes de contraseñas y uso).
+# NO se versiona nunca.
+puente_web/datos/
 
 # ─────────────────────────────────────────────────────────────
 # Logs y archivos temporales de la aplicación
@@ -46,7 +48,6 @@ dist/
 !.env.example
 *.pem
 *.key
-cliente-voz.env
 puente-web.env
 
 # ─────────────────────────────────────────────────────────────
@@ -62,8 +63,30 @@ cliente_android/herramientas/es_50k.txt
 *.aab
 
 # ─────────────────────────────────────────────────────────────
-# Resguardos personales (código retirado, no forma parte del producto)
+# Cliente de escritorio (Ubuntu y Windows)
 # ─────────────────────────────────────────────────────────────
+
+# Entorno virtual del cliente Ubuntu (se recrea con requirements.txt).
+entorno_dictado/
+
+# Modelos Vosk antiguos (2,3 GB). El cliente ya usa faster-whisper.
+vosk-model-es/
+
+# Artefactos de la compilación con Nuitka y resultados del empaquetado.
+cliente_ubuntu/empaquetado/salida/
+cliente_ubuntu/empaquetado/.construccion/
+
+# Registros del cliente Ubuntu (rotados).
+cliente_ubuntu/logs/
+
+# Compilación del cliente Windows con PyInstaller.
+cliente_windows/build/
+cliente_windows/dist/
+*.exe
+*.deb
+
+# Carpetas de trabajo y respaldos de código retirado.
+scratch/
 resguardos/
 
 # ─────────────────────────────────────────────────────────────
@@ -76,16 +99,11 @@ resguardos/
 *~
 
 # ─────────────────────────────────────────────────────────────
-# Compilación del cliente para Windows (PyInstaller)
-# Se conserva cliente_voz.spec, pero no los artefactos generados.
-# ─────────────────────────────────────────────────────────────
-cliente_windows/build/
-cliente_windows/dist/
-cliente_windows/entorno_dictado_win/
-
-# ─────────────────────────────────────────────────────────────
 # Sistema operativo
 # ─────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Historial de herramientas de diseño (Open Design).
+.open-design/

@@ -1,0 +1,3 @@
+# Resultado de la compilación y caché del contenedor (no se versionan).
+salida/
+.construccion/

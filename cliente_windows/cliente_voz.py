@@ -1,4 +1,4 @@
-"""Cliente de dictado por voz — ZMQ DEALER.
+"""Cliente de SkipKey — ZMQ DEALER.
 
 Captura audio del micrófono, lo envía al servidor, recibe texto transcrito
 y comandos de voz, y los ejecuta localmente (inyección de texto, apertura
@@ -7,13 +7,13 @@ de aplicaciones, control de volumen, TTS, etc.).
 import json
 import os
 import queue
-import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
-import unicodedata
+import webbrowser
+from urllib.parse import quote_plus
 
 import numpy as np
 import pyautogui
@@ -24,12 +24,40 @@ from pynput import keyboard
 
 from protocolo import (
     AUDIO, DICTADO_START, DICTADO_STOP,
-    TEXTO, TEXTO_PARCIAL, FIN_DICTADO, COMANDO, PING, PONG, ESTADO,
+    TEXTO, TEXTO_PARCIAL, FIN_DICTADO, PING, PONG, ESTADO,
     CHUNK_MUESTRAS,
     crear_audio, crear_dictado_start, crear_dictado_start_vivo,
-    crear_dictado_stop, crear_ping,
+    crear_dictado_start_voz, crear_dictado_stop, crear_ping,
     decodificar_texto,
 )
+from marcas import aplicar_configuracion as aplicar_marcas
+from marcas import es_comando, parsear, resolver
+import marcas
+import perfil as perfil_cuenta
+import sesion
+from diccionario_desktop import DiccionarioEscritorio
+
+try:
+    from voz_asistente import (
+        _buscar_comando_simple as buscar_comando_simple,
+        hablar,
+        preguntar_deepseek,
+    )
+    ASISTENTE_DISPONIBLE = True
+except Exception as _e:  # sin edge-tts el dictado y los comandos siguen igual
+    ASISTENTE_DISPONIBLE = False
+    _ERROR_ASISTENTE = str(_e)
+
+    def buscar_comando_simple(_texto):
+        return None
+
+    def hablar(_texto):
+        return None
+
+    def preguntar_deepseek(_texto):
+        return None
+from bandeja import iniciar_en_hilo
+from escucha_local import EscuchaLocal, quitar_frase_cierre
 from sonidos import reproducir_sonido
 from utils_logging import imprimir, rotar_logs_al_iniciar
 
@@ -46,6 +74,32 @@ FRECUENCIA = 16000
 SIN_AUDIO_SEGUNDOS = 5               # sin chunks durante este tiempo = caída
 REINTENTO_AUDIO_SEGUNDOS = 10        # reintento durante el primer minuto
 REINTENTO_AUDIO_SEGUNDOS_LARGO = 60  # reintento después de ese minuto
+
+# --- Dictado por palabra clave con el motor local (solo Windows) ---
+# El dictado se cierra diciendo una de las frases configuradas en
+# comandos_windows.json. Una pausa al hablar **no** lo cierra (antes sí: 1,6 s
+# de silencio lo cortaban a mitad de una frase). Quedan dos seguros que no se
+# confunden con una pausa: uno para el dictado en que no se dijo nada y otro
+# para el que se quedó abierto por olvido.
+UMBRAL_VOZ = 500          # pico mínimo para considerar que se está hablando
+DICTADO_VOZ_SIN_VOZ_SEGUNDOS = 6.0   # sin decir nada tras la clave = cerrado
+DICTADO_VOZ_MAX_SEGUNDOS = 180.0     # tope de duración de un dictado de voz
+# Silencio que confirma que lo dicho era una orden (o una consulta) y no el
+# principio de otra frase. Son 2 s a propósito: al dictar un comando el usuario
+# dice el verbo y el argumento y **se calla**, esperando que se ejecute. Una
+# pausa de 0,8 s es demasiado corta: se confundiría con el aliento entre dos
+# frases habladas.
+ORDEN_SILENCIO_SEGUNDOS = 2.0
+# Palabras que puede tener el argumento de una orden. Con 3 o más ya no es una
+# orden: es una frase hablada, y en modo comando se manda al asistente (Whisper
+# la transcribe y `voz_asistente` responde o la consulta a DeepSeek).
+ORDEN_MAX_PALABRAS_ARGUMENTO = 2
+# Tope del modo comando: si pasan estos segundos sin oír nada desde la última
+# voz (o desde el pitido), se cierra. Se midió que con 15 s no daba tiempo a
+# decir la orden después de oír el pitido (2026-11-05): el modo se cerraba y el
+# «iniciar dictado» caía en el vacío. Un minuto es margen de sobra y el cierre
+# solo ocurre si de verdad no se dice nada.
+MODO_COMANDO_MAX_SEGUNDOS = 60
 AVISO_AUDIO_SEGUNDOS = 30            # avisar en pantalla tras este tiempo
 
 
@@ -61,6 +115,20 @@ def _nombre_config():
 
 
 RUTA_JSON = os.path.join(_directorio_base(), _nombre_config())
+
+
+def leer_configuracion():
+    """El JSON de configuración tal cual (vacío si falta o está roto).
+
+    Se relee a propósito en cada uso: la ventana de configuración lo cambia sin
+    reiniciar, y la cuenta necesita ver la dirección del puente al día.
+    """
+    try:
+        with open(RUTA_JSON, encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+    except (OSError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
 RUTA_INDICADOR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "indicador_grabacion.py"
 )
@@ -230,6 +298,70 @@ def cargar_modo_activacion():
     return modo
 
 
+def cargar_escucha_local():
+    """¿Arrancar la escucha local de la palabra clave al abrir el cliente?
+
+    Viene **apagada** por defecto: necesita el paquete faster-whisper instalado
+    ejecutable, y no siempre está. Se puede encender y apagar en caliente desde
+    el icono de la bandeja.
+    """
+    try:
+        with open(RUTA_JSON, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        activa = bool(config.get("escucha_local", False))
+    except Exception:
+        activa = False
+    if activa:
+        imprimir("Escucha local de la palabra clave: activada en la configuración.")
+    return activa
+
+
+def _nombre_modelo_whisper():
+    """Modelo de Whisper que reconoce la palabra clave y las órdenes.
+
+    Por defecto `base` (~142 MB, WER medido del 48 % frente al 103 % de Vosk
+    small). Se puede cambiar con DICTADO_MODELO_WHISPER (`tiny`, `base`,
+    `small`), o con una ruta local a un modelo ya convertido junto al `.exe`.
+    """
+    nombre = os.environ.get("DICTADO_MODELO_WHISPER", "").strip()
+    if nombre:
+        return nombre
+    base = _directorio_base()
+    for ruta in (
+        os.path.join(base, "whisper-base"),
+        os.path.join(base, "modelos", "whisper-base"),
+    ):
+        if os.path.isdir(ruta):
+            return ruta
+    return "base"
+    return ""
+
+
+def cargar_palabras_escucha():
+    """Clave y frases de cierre configuradas en comandos_windows.json.
+
+    `frase_fin` puede ser una cadena o una lista: cualquiera de ellas cierra el
+    dictado. Las frases se usan tal cual en la gramática de SAPI y normalizadas
+    para comparar lo que el motor devuelve.
+    """
+    try:
+        with open(RUTA_JSON, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        clave = str(config.get("clave", "computadora")).strip() or "computadora"
+        frases = config.get("frase_fin", ["fin del dictado"])
+        # Verbos y frases de comando son configurables: se aplican aquí.
+        aplicar_marcas(config)
+    except Exception:
+        clave, frases = "computadora", ["fin del dictado"]
+    if isinstance(frases, str):
+        frases = [frases]
+    frases = [str(f).strip() for f in frases if str(f).strip()]
+    if not frases:
+        frases = ["fin del dictado"]
+    imprimir(f"Palabras de la escucha: clave «{clave}», cierre {frases}")
+    return clave, frases
+
+
 # ---------------------------------------------------------------------------
 # Procesamiento de comandos (mismo que dictado.py)
 # ---------------------------------------------------------------------------
@@ -258,52 +390,195 @@ def _controlar_volumen_windows(accion):
         imprimir(f"[VOLUMEN] Error en Windows: {e}")
 
 
-def procesar_comando(texto):
-    """Detecta si el texto es un comando de voz y lo ejecuta.
-    Retorna True si era un comando, False si es dictado normal."""
-    texto_normalizado = (
-        unicodedata.normalize("NFKD", texto.lower().strip())
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
-    texto_normalizado = re.sub(r"[,.:;!¡¿?]", "", texto_normalizado)
-    if not texto_normalizado.startswith("computadora "):
+# Artículos que se descartan delante del programa: «el navegador» → «navegador».
+_ARTICULOS = ("el ", "la ", "los ", "las ", "un ", "una ")
+
+
+def _avisar_comando(titulo, texto, avisar=True):
+    """Avisa de un problema con un comando, con diálogo o solo en el registro.
+
+    `avisar=False` es para el dictado por voz: un diálogo encima de la ventana
+    en la que estas dictando es intrusivo. El usuario oye el pitido de error y,
+    si quiere el detalle, mira el registro del cliente.
+    """
+    if avisar:
+        _avisar_usuario(titulo, texto)
+    else:
+        imprimir(f"[VOZ] {titulo}: {texto}")
+
+
+# Palabras de relleno que se pueden decir delante del sitio: «ingresa a la
+# página del seace» → «seace». Se van quitando del principio, probando el
+# catálogo en cada paso (ver `_resolver_sitio`).
+_RELLENO_SITIO = (
+    "a", "al", "en", "el", "la", "los", "las", "un", "una", "de", "del",
+    "pagina", "sitio", "web", "internet", "navegador",
+)
+
+# Finales de dominio que se dicen como palabra suelta: «youtube punto com» o
+# «youtube com» llegan así porque la normalización quita el punto.
+_EXTENSIONES = (
+    "com", "org", "net", "pe", "gob", "edu", "io", "es", "tv", "info", "app",
+)
+
+
+def _resolver_sitio(nombre):
+    """Devuelve la URL del sitio dicho por el usuario, o None.
+
+    Se miran cuatro cosas, en este orden:
+
+    1. el nombre tal cual en el catálogo `web` de comandos_windows.json;
+    2. quitando relleno por delante («a la página del seace» → «seace»);
+    3. quedándose con la parte del nombre si lo último es un dominio («youtube
+       com» → «youtube» → el catálogo);
+    4. si parece un dominio («youtube com» → «youtube.com»), se abre tal cual.
+
+    Solo se aceptan direcciones http/https: por voz no se puede colar un
+    `file://` ni nada parecido.
+    """
+    try:
+        with open(RUTA_JSON, "r", encoding="utf-8") as f:
+            sitios = json.load(f).get("web")
+    except Exception:
+        sitios = None
+    if not isinstance(sitios, dict):
+        sitios = {}
+
+    texto = (nombre or "").strip().lower()
+    if not texto:
+        return None
+
+    # «youtube punto com» se oye con «punto» en medio.
+    palabras = [p for p in texto.split() if p not in ("punto", "punto.")]
+    if not palabras:
+        return None
+
+    while palabras:
+        candidato = " ".join(palabras)
+        if candidato in sitios:
+            return str(sitios[candidato])
+        if palabras[0] not in _RELLENO_SITIO:
+            break
+        palabras = palabras[1:]
+
+    if len(palabras) >= 2 and palabras[-1] in _EXTENSIONES:
+        sin_extension = " ".join(palabras[:-1])
+        if sin_extension in sitios:
+            return str(sitios[sin_extension])
+        return "https://" + ".".join(palabras)
+
+    plano = "".join(palabras)
+    if plano and "." in plano:
+        if not plano.startswith(("http://", "https://")):
+            plano = "https://" + plano
+        return plano
+    return None
+
+
+def _buscar_programa(accion, nombre, avisar=True):
+    """Busca el programa en comandos_windows.json y devuelve su ruta, o None.
+
+    `accion` es «abre» o «cerrar». Se prueba el nombre tal cual y, si no está,
+    sin el artículo de delante (el servidor manda lo que transcribió Whisper).
+    """
+    try:
+        with open(RUTA_JSON, "r", encoding="utf-8") as f:
+            comandos = json.load(f)
+    except Exception:
+        _avisar_comando(
+            "Configuración de comandos",
+            "No se pudo leer comandos_windows.json.",
+            avisar,
+        )
+        return None
+
+    tabla = comandos.get(accion)
+    if not isinstance(tabla, dict):
+        _avisar_comando(
+            "Comando no disponible",
+            f"«{accion}» no está en comandos_windows.json.",
+            avisar,
+        )
+        return None
+
+    clave = (nombre or "").strip().lower()
+    if clave in tabla:
+        return tabla[clave]
+    for articulo in _ARTICULOS:
+        if clave.startswith(articulo):
+            corto = clave[len(articulo):].strip()
+            if corto in tabla:
+                return tabla[corto]
+            break
+    return None
+
+
+def _abrir_sitio(url, avisar=True):
+    """Abre una dirección en el navegador predeterminado del sistema.
+
+    Solo se aceptan `http` y `https`: lo que llega puede venir de una voz mal
+    transcrita, y por aquí no debe poder colarse un `file://` ni un
+    `javascript:`.
+    """
+    direccion = (url or "").strip()
+    if not direccion.lower().startswith(("http://", "https://")):
+        _avisar_comando(
+            "Dirección no válida",
+            f"«{direccion}» no empieza por http ni https.",
+            avisar,
+        )
+        return False
+    imprimir(f"[TOCINA] Abriendo {direccion}")
+    try:
+        webbrowser.open(direccion)
+    except Exception as e:
+        _avisar_comando("No se pudo abrir la página", str(e), avisar)
+        return False
+    return True
+
+
+def ejecutar_comando(accion, argumento="", avisar=True):
+    """Ejecuta una acción que el servidor marcó con `¬`.
+
+    `accion` es lo que venía antes de la marca (un verbo de programa o una frase
+    de sistema) y `argumento` lo que venía después. La lista válida es la del
+    servidor (`comandos.py` de `servidor_dictado`): si aquí no se reconoce, se
+    avisa y no se ejecuta nada.
+
+    `avisar=False` deja el aviso solo en el registro: lo usa el dictado por voz
+    (ver `_avisar_comando`).
+
+    Devuelve True si se ejecutó algo.
+    """
+    destino = resolver(accion, argumento)
+    if destino is None:
+        _avisar_comando(
+            "Comando no reconocido",
+            f"El servidor envió «{(accion + ' ' + (argumento or '')).strip()}», "
+            "que este cliente no sabe ejecutar.",
+            avisar,
+        )
         return False
 
-    resto = texto_normalizado[12:].strip()
-    partes = resto.split(maxsplit=1)
+    clave, dato = destino
 
-    if len(partes) < 1:
-        return True
-
-    accion = partes[0]
-    resto_comando = partes[1] if len(partes) > 1 else ""
-
-    # --- Comandos de aplicación ---
-    if accion in ("abre", "cierra", "cerrar"):
-        accion_canonica = "cerrar" if accion in ("cierra", "cerrar") else "abre"
-        if not resto_comando:
-            imprimir(f"[TOCINA] ¿{'Abrir' if accion == 'abre' else 'Cerrar'} qué?")
-            return True
-
-        try:
-            with open(RUTA_JSON, "r", encoding="utf-8") as f:
-                comandos = json.load(f)
-        except Exception:
-            imprimir("[TOCINA] No se pudo leer la configuración de comandos.")
-            return True
-
-        if accion_canonica not in comandos:
-            imprimir(f"[TOCINA] Acción '{accion}' no reconocida.")
-            return True
-
-        if resto_comando not in comandos[accion_canonica]:
-            imprimir(f"[TOCINA] Programa '{resto_comando}' no encontrado en '{accion}'")
-            return True
-
-        objetivo = comandos[accion_canonica][resto_comando]
-
-        if accion_canonica == "abre":
+    # --- Abrir y cerrar programas ---
+    if clave in ("abre", "cerrar"):
+        if not dato:
+            _avisar_comando(
+                "Comando incompleto",
+                f"¿{'Abrir' if clave == 'abre' else 'Cerrar'} qué?",
+                avisar,
+            )
+            return False
+        objetivo = _buscar_programa(clave, dato, avisar)
+        if not objetivo:
+            # Puede ser una página web: «abre youtube».
+            sitio = _resolver_sitio(dato) if clave == "abre" else None
+            if sitio:
+                return _abrir_sitio(sitio, avisar)
+            return False
+        if clave == "abre":
             imprimir(f"[TOCINA] Abriendo {objetivo}...")
             if sys.platform == "win32":
                 try:
@@ -317,7 +592,7 @@ def procesar_comando(texto):
                 subprocess.Popen(
                     [objetivo], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-        elif accion_canonica == "cerrar":
+        else:
             imprimir(f"[TOCINA] Cerrando {objetivo}...")
             if sys.platform == "win32":
                 subprocess.run(
@@ -331,8 +606,29 @@ def procesar_comando(texto):
                 )
         return True
 
+    # --- Dictado ---
+    if clave == "dictar":
+        # Abrir el dictado necesita el micrófono y el bucle del cliente: desde
+        # aquí (ventana de configuración o prueba) no se puede.
+        imprimir("[TOCINA] «dictar» solo se ejecuta en modo comando, por voz.")
+        return False
+
+    # --- Páginas web y búsquedas ---
+    if clave == "web":
+        if not dato:
+            _avisar_comando("Comando incompleto", "¿Qué página abro?", avisar)
+            return False
+        return _abrir_sitio(dato, avisar)
+    if clave == "buscar":
+        if not dato:
+            _avisar_comando("Comando incompleto", "¿Qué busco?", avisar)
+            return False
+        return _abrir_sitio(
+            "https://www.google.com/search?q=" + quote_plus(dato), avisar
+        )
+
     # --- Comandos de sistema ---
-    if resto in ("sube volumen", "subir volumen", "aumenta volumen"):
+    if clave == "subir_volumen":
         if sys.platform == "win32":
             _controlar_volumen_windows("subir")
         else:
@@ -342,7 +638,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Volumen +10%")
         return True
-    if resto in ("baja volumen", "bajar volumen", "reduce volumen"):
+    if clave == "bajar_volumen":
         if sys.platform == "win32":
             _controlar_volumen_windows("bajar")
         else:
@@ -352,7 +648,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Volumen -10%")
         return True
-    if resto in ("silencia", "silencio", "mute", "mudo"):
+    if clave == "silenciar":
         if sys.platform == "win32":
             _controlar_volumen_windows("silenciar")
         else:
@@ -362,7 +658,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Silencio alternado")
         return True
-    if resto in ("reproduce", "reproducir", "play", "pausa", "pausar"):
+    if clave == "reproducir":
         if sys.platform == "win32":
             pyautogui.press("playpause")
         else:
@@ -372,7 +668,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Reproducir/Pausa")
         return True
-    if resto in ("siguiente", "siguiente cancion", "next"):
+    if clave == "siguiente":
         if sys.platform == "win32":
             pyautogui.press("nexttrack")
         else:
@@ -382,7 +678,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Siguiente")
         return True
-    if resto in ("anterior", "anterior cancion", "prev"):
+    if clave == "anterior":
         if sys.platform == "win32":
             pyautogui.press("prevtrack")
         else:
@@ -392,7 +688,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Anterior")
         return True
-    if resto in ("captura pantalla", "capturar pantalla", "pantallazo"):
+    if clave == "captura":
         if sys.platform == "win32":
             pyautogui.press("printscreen")
         else:
@@ -402,7 +698,7 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Captura de pantalla")
         return True
-    if resto in ("bloquea pantalla", "bloquear pantalla", "bloquear"):
+    if clave == "bloquear":
         if sys.platform == "win32":
             subprocess.run(
                 ["rundll32.exe", "user32.dll,LockWorkStation"],
@@ -415,97 +711,49 @@ def procesar_comando(texto):
             )
         imprimir("[TOCINA] Pantalla bloqueada")
         return True
-    if resto in ("apaga", "apagar", "apagar equipo"):
+    if clave == "apagar":
         imprimir("[TOCINA] Apagado deshabilitado por seguridad. Hazlo manualmente.")
         return True
-    if resto in ("reinicia", "reiniciar", "reiniciar equipo"):
+    if clave == "reiniciar":
         imprimir("[TOCINA] Reinicio deshabilitado por seguridad. Hazlo manualmente.")
         return True
 
-    # --- Alarma ---
-    _NUMEROS_TEXTO = {
-        "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3,
-        "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7, "ocho": 8,
-        "nueve": 9, "diez": 10, "once": 11, "doce": 12, "trece": 13,
-        "catorce": 14, "quince": 15, "dieciseis": 16, "diecisiete": 17,
-        "dieciocho": 18, "diecinueve": 19, "veinte": 20,
-        "treinta": 30, "cuarenta": 40, "cincuenta": 50, "sesenta": 60,
-        "media": 0.5,
-    }
-
-    match_alarma = re.match(
-        r"(?:pon|coloca|con)\s+(?:un(?:a)?\s+)?alarma\s+"
-        r"(?:de\s+)?(?:en\s+)?(?:dentro\s+de\s+)?"
-        r"(\d+|[a-z]+)\s*"
-        r"(segundos?|minutos?|horas?)",
-        resto,
+    _avisar_comando(
+        "Comando no disponible", f"«{clave}» no se pudo ejecutar.", avisar
     )
-    if match_alarma:
-        cantidad_str = match_alarma.group(1)
-        if cantidad_str.isdigit():
-            cantidad = int(cantidad_str)
-        else:
-            cantidad = _NUMEROS_TEXTO.get(cantidad_str)
-        if cantidad is None:
-            return True
-        unidad = match_alarma.group(2)
-        if unidad.startswith("segundo"):
-            segundos = cantidad
-        elif unidad.startswith("minuto"):
-            segundos = cantidad * 60
-        else:  # hora
-            segundos = cantidad * 3600
+    return False
 
-        imprimir(f"[TOCINA] ⏰ Alarma programada en {cantidad} {unidad}")
-        from voz_asistente import hablar
-        threading.Thread(
-            target=hablar,
-            args=(f"Alarma programada en {cantidad} {unidad}",),
-            daemon=True,
-        ).start()
 
-        def _sonar_alarma():
-            time.sleep(segundos)
-            imprimir(f"[TOCINA] ⏰ ¡Alarma! ({cantidad} {unidad})")
-            reproducir_sonido("alarma")
-            from voz_asistente import hablar
+def _ejecutar_y_avisar(accion, argumento="", avisar=True):
+    """Ejecuta la orden y avisa con un pitido de si salió o no.
 
-            hablar(f"Alarma de {cantidad} {unidad}")
+    El pitido se da **aquí**, cuando ya se sabe el resultado: en el dictado por
+    voz de una orden con argumento desconocido («abre cromo») hay que esperar a
+    que el servidor devuelva el argumento corregido, así que no se puede avisar
+    al oírlo.
+    """
+    if ejecutar_comando(accion, argumento, avisar=avisar):
+        reproducir_sonido("orden")
+    else:
+        detalle = (accion + " " + (argumento or "")).strip()
+        imprimir(f"[VOZ] La orden «{detalle}» no se ejecutó.")
+        reproducir_sonido("error")
 
-        threading.Thread(target=_sonar_alarma, daemon=True).start()
-        return True
 
-    # --- Asistente conversacional ---
-    from voz_asistente import _buscar_comando_simple, hablar, preguntar_deepseek
+def _hablar_respuesta(texto):
+    """Dice la respuesta del asistente en voz alta (edge-tts).
 
-    # 1. Comandos simples predefinidos
-    respuesta = _buscar_comando_simple(resto)
-    if respuesta:
-        imprimir(f"[TOCINA] → {respuesta}")
-        threading.Thread(target=hablar, args=(respuesta,), daemon=True).start()
-        return True
-
-    # 2. DeepSeek (solo con palabra clave "consulta global")
-    if resto.startswith("consulta global "):
-        consulta = resto[len("consulta global "):].strip()
-        if consulta:
-            imprimir(f"[TOCINA] Preguntando a DeepSeek: '{consulta}'")
-            respuesta = preguntar_deepseek(consulta)
-            if respuesta:
-                imprimir(f"[TOCINA] DeepSeek → {respuesta}")
-                threading.Thread(target=hablar, args=(respuesta,), daemon=True).start()
-            else:
-                fallback = (
-                    "Lo siento, no puedo responder en este momento. "
-                    "La clave de DeepSeek no está configurada o no hay conexión."
-                )
-                imprimir(f"[TOCINA] {fallback}")
-                threading.Thread(target=hablar, args=(fallback,), daemon=True).start()
-        return True
-
-    # Comando no reconocido
-    imprimir(f"[TOCINA] Comando no reconocido: '{resto}'")
-    return True
+    Va en su propio hilo: `hablar()` bloquea hasta terminar y el bucle del
+    cliente no puede quedarse esperando a que acabe la locución. Si el TTS
+    falla, se avisa con el pitido de error: antes el fallo quedaba invisible.
+    """
+    reproducir_sonido("texto")
+    try:
+        if not hablar(texto):
+            reproducir_sonido("error")
+    except Exception as e:
+        imprimir(f"[VOZ] No se pudo hablar la respuesta: {e}")
+        reproducir_sonido("error")
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +854,91 @@ class ClienteVoz:
         self._ultimo_intento_audio = 0.0        # Último reintento de apertura
         self._ultimo_error_audio = ""           # Último error (para no repetirlo)
 
+        # --- Cuenta y perfil (2026-11-18) ---------------------------------
+        # Sin cuenta NO se dicta: el perfil es lo que hace que cada usuario
+        # tenga sus correcciones y sus ajustes. El diccionario es local y manda;
+        # la cuenta solo lo pone al día con el resto de sus aparatos.
+        self._config_cuenta = leer_configuracion()
+        self._diccionario = DiccionarioEscritorio(sesion.perfil()).cargar()
+        if sesion.hay_sesion():
+            imprimir(
+                f"[CUENTA] Sesión de «{sesion.usuario()}» "
+                f"(perfil «{sesion.perfil()}», plan {sesion.cargar().get('plan') or '—'})."
+            )
+        else:
+            imprimir(
+                "[CUENTA] Sin sesión: el dictado está desactivado. Abre el icono de "
+                "la bandeja → Configuración… → Cuenta y entra con tu usuario."
+            )
+        threading.Thread(
+            target=self._bucle_sincronizacion, daemon=True, name="perfil"
+        ).start()
+
+        # --- Escucha local de la palabra clave y bandeja ---
+        self._escucha_local = None       # escucha_local.EscuchaLocal (Whisper)
+        self._bandeja = None             # bandeja.Bandeja
+        self._dictado_voz = False        # El dictado en curso lo abrió la clave
+        self._voz_empezo = 0.0           # Cuándo se abrió el dictado por voz
+        self._voz_hablado = False        # Ya se oyó algo en este dictado
+        self._frase_cierre = ""          # Frase de cierre que oyó el motor local
+        # Dictado de voz: el audio se guarda hasta saber qué es (orden,
+        # consulta o dictado). Así un comando se ejecuta sin subir su audio.
+        self._buffer_voz = []
+        self._dictado_enviado = False   # el DICTADO_START ya salió al socket
+        self._start_encolado = False    # el evento start ya está en cola
+        # La palabra clave abre el **modo comando** (ver `_al_detectar_clave`).
+        # Solo el comando «iniciar dictado» pasa a transcribir texto.
+        self._modo_comando = False
+        self._ultima_voz_modo = 0.0      # Última voz en modo comando
+        # Frase oída esperando decisión: silencio de 2 s para saber si es una
+        # orden (la corrige el servidor) o una consulta (la responde la IA).
+        self._orden_pendiente = None
+        # Qué se está esperando del servidor: "orden", "consulta" o None.
+        self._esperando = None
+        # Última frase que reconoció el motor local (para no repetirla en el log).
+        self._ultimo_texto_oido = ""
+        self.comandos_activos = True     # Se puede pausar desde la bandeja
+        self._escucha_configurada = cargar_escucha_local()
+        # Palabras: la clave abre el modo comando y cualquiera de las frases de
+        # cierre termina el dictado. Salen de comandos_windows.json.
+        self._clave, self._frases_fin = cargar_palabras_escucha()
+        # La ventana de configuración escribe comandos_windows.json; aquí se
+        # vigila su fecha para releerlo sin reiniciar (Windows no tiene señales).
+        self._mtime_config = self._mtime_json()
+
+    def _mtime_json(self):
+        """Fecha de modificación del JSON (0.0 si no se puede leer)."""
+        try:
+            return os.path.getmtime(RUTA_JSON)
+        except Exception:
+            return 0.0
+
+    def _vigilar_configuracion(self):
+        """Recarga la configuración si la ventana la guardó mientras corre."""
+        ahora = self._mtime_json()
+        if ahora and ahora != self._mtime_config:
+            self._mtime_config = ahora
+            self._recargar_configuracion()
+
+    def _recargar_configuracion(self):
+        """Relee comandos_windows.json sin reiniciar el cliente.
+
+        Cubre lo que la ventana de configuración cambia: la clave y las frases de
+        la escucha, y los verbos y frases de comando (que se aplican sobre
+        `marcas`). Las teclas y el dispositivo de audio necesitan reiniciar.
+        """
+        self._clave, frases = cargar_palabras_escucha()
+        self._frases_fin = list(frases)
+        if self._escucha_local is not None:
+            self._escucha_local.clave = self._clave
+            self._escucha_local.frases_fin = tuple(frases)
+            self._escucha_local.reiniciar()
+        imprimir(
+            f"[CONFIG] Recargada: clave «{self._clave}», {len(marcas.FRASES)} "
+            f"frases y {len(marcas.VERBOS)} verbos de comando."
+        )
+        self._actualizar_bandeja()
+
     # --- Callback de audio ---
 
     def _callback_audio(self, indata, frames, time_info, status):
@@ -617,6 +950,7 @@ class ClienteVoz:
         ahora = time.time()
         self._ultimo_chunk_audio = ahora
         self._chunks_ventana += 1
+        pico = 0
         try:
             pico = int(np.abs(indata.astype(np.int32)).max())
             if pico > self._pico_ventana:
@@ -627,6 +961,8 @@ class ClienteVoz:
             self._cola_audio.put_nowait(indata.copy())
         except queue.Full:
             pass  # Descartar si el buffer está lleno
+        # ¿Se quedó callado un dictado abierto con la palabra clave?
+        self._vigilar_fin_dictado_voz(pico)
 
     # --- Captura de audio ---
 
@@ -812,6 +1148,46 @@ class ClienteVoz:
 
     # --- Procesar mensajes del servidor ---
 
+    def _quitar_frase_cierre(self, texto):
+        """Quita del final la frase de cierre que oyó el motor local.
+
+        El servidor ya no necesita saber que se dijo (no se le manda `fin` en
+        el protocolo): la quita el cliente, que es el único que sabe que la
+        frase se dijo. El recorte es tolerante —«fin de dictado» y «fin del
+        dictado» acaban igual— y solo mira la cola del texto, así que no puede
+        tocar nada del medio.
+        """
+        if not self._frase_cierre or not (texto or "").strip():
+            return texto
+        return quitar_frase_cierre(texto)
+
+    def _entregar_texto(self, texto):
+        """Escribe o copia el texto de un dictado, según el modo de salida.
+
+        El servidor ya devuelve el texto limpio: aquí solo se quita la frase de
+        cierre cuando la oyó este cliente, y se aplican las correcciones
+        aprendidas en la cuenta («se ace» → «seace»).
+        """
+        texto = self._quitar_frase_cierre(texto)
+        # Si la ventana de configuración enseñó una corrección hace un momento,
+        # se usa ya: no hace falta reiniciar el cliente.
+        self._diccionario.recargar_si_cambio()
+        texto = self._diccionario.corregir(texto)
+        if not (texto or "").strip():
+            return
+        # El texto que se entrega se registra: lo que devuelve el servidor
+        # todavía lleva la frase de cierre, así que en el registro no había
+        # forma de ver qué acababa realmente en el portapapeles (2026-11-05).
+        if self._escribir_este_dictado:
+            # Modo "escribir": el texto aparece donde está el cursor
+            self._cola_escritura.put(texto)
+            imprimir(f"[TEXTO] Escrito donde está el cursor: «{texto}»")
+        else:
+            # Dictado normal → al portapapeles para pegar con Ctrl+V
+            pyperclip.copy(texto + " ")
+            imprimir(f"[TEXTO] Copiado al portapapeles: «{texto}»")
+        reproducir_sonido("texto")
+
     def _manejar_mensaje(self, frames):
         if len(frames) < 1:
             return
@@ -828,17 +1204,18 @@ class ClienteVoz:
             self._esperando_transcripcion = False
             texto = decodificar_texto(frames)
             imprimir(f"Texto detectado: {texto}")
-            if procesar_comando(texto):
-                pass  # Era un comando de voz: ya se ejecutó
-            elif self._escribir_este_dictado:
-                # Modo "escribir": el texto aparece donde está el cursor
-                self._cola_escritura.put(texto)
-                reproducir_sonido("listo")
+            self._actualizar_bandeja()
+            # El servidor ya no marca comandos: devuelve el texto limpio. Qué
+            # hacer con él depende de lo que se estuviera esperando: corregir el
+            # argumento de una orden, contestar una consulta o pegarlo.
+            if self._esperando == "orden":
+                self._esperando = None
+                self._orden_corregida(texto)
+            elif self._esperando == "consulta":
+                self._esperando = None
+                self._responder_consulta(texto)
             else:
-                # Dictado normal → al portapapeles para pegar con Ctrl+V
-                pyperclip.copy(texto + " ")
-                imprimir("[PORTAPAPELES] Texto copiado. Pega donde quieras con Ctrl+V.")
-                reproducir_sonido("listo")
+                self._entregar_texto(texto)
 
         elif tipo == TEXTO_PARCIAL:
             # Frase del dictado en vivo: se escribe ya, donde está el cursor
@@ -851,25 +1228,19 @@ class ClienteVoz:
         elif tipo == FIN_DICTADO:
             self._esperando_transcripcion = False
             imprimir("[CLIENTE] Fin del dictado en vivo.")
-            reproducir_sonido("listo")
-
-        elif tipo == COMANDO:
-            self._esperando_transcripcion = False
-            texto = decodificar_texto(frames)
-            imprimir(f"[VOZ] Comando detectado: '{texto}'")
-            threading.Thread(
-                target=procesar_comando, args=(texto,), daemon=True
-            ).start()
+            reproducir_sonido("texto")
 
         elif tipo == ESTADO:
             texto = decodificar_texto(frames)
             imprimir(f"[SERVIDOR] {texto}")
+            self._actualizar_bandeja()
             # Si esperábamos una transcripción, este aviso ES la respuesta
             # del dictado: el servidor no devolvió texto (no llegó audio o
             # no se detectó voz). Hay que decírselo al usuario en pantalla,
             # porque el ejecutable de Windows no tiene consola donde verlo.
             if self._esperando_transcripcion:
                 self._esperando_transcripcion = False
+                self._esperando = None
                 _avisar_usuario("Dictado sin texto", texto)
 
         elif tipo == PONG:
@@ -892,7 +1263,20 @@ class ClienteVoz:
         # Hebra que escribe en el cursor los textos dictados (en orden)
         threading.Thread(target=self._bucle_escritura, daemon=True).start()
 
-        # Iniciar captura de audio (stream continuo para Vosk). Si falla, el
+        # Icono en el área de notificación: enciende y apaga la escucha,
+        # pausa los comandos y permite cerrar el cliente sin buscar la carpeta.
+        try:
+            self._bandeja = iniciar_en_hilo(self, al_fallar=_avisar_usuario)
+        except Exception as e:
+            imprimir(f"[BANDEJA] Sin icono en la bandeja: {e}")
+            _avisar_usuario("Icono de la bandeja", str(e))
+
+        # Escucha local de la palabra clave (motor de voz de Windows)
+        if self._escucha_configurada:
+            self._encender_escucha_local()
+        self._actualizar_bandeja()
+
+        # Iniciar captura de audio (stream continuo para la escucha local). Si falla, el
         # cliente sigue vivo (teclado, texto y comandos) y la reintenta en el
         # bucle principal hasta que el sistema de audio esté disponible.
         stream = self._abrir_stream_audio()
@@ -918,6 +1302,9 @@ class ClienteVoz:
 
                 # 2. Procesar eventos de teclado
                 self._procesar_eventos()
+
+                # 2b. Releer la configuración si la ventana la guardó
+                self._vigilar_configuracion()
 
                 # 3. Recibir mensajes del servidor (sin bloquear)
                 socks = dict(poller.poll(timeout=50))
@@ -1006,6 +1393,12 @@ class ClienteVoz:
             imprimir("[CLIENTE] Detenido por el usuario.")
         finally:
             self._activo = False
+            self._apagar_escucha_local()
+            if self._bandeja is not None:
+                try:
+                    self._bandeja.detener()
+                except Exception:
+                    pass
             if stream is not None:
                 try:
                     stream.stop()
@@ -1029,7 +1422,13 @@ class ClienteVoz:
         while enviados < 20:  # Máximo 20 chunks por iteración (~1.3 s de audio)
             try:
                 chunk = self._cola_audio.get_nowait()
-                self._socket.send_multipart(crear_audio(chunk))
+                if self._dictado_voz and not self._dictado_enviado:
+                    # Fase de decisión: se guarda en memoria para no mandar al
+                    # servidor el audio de una orden que se ejecutará aquí.
+                    self._buffer_voz.append(chunk)
+                else:
+                    self._socket.send_multipart(crear_audio(chunk))
+                self._alimentar_escucha(chunk)
                 enviados += 1
             except queue.Empty:
                 break
@@ -1040,7 +1439,25 @@ class ClienteVoz:
             try:
                 evento = self._cola_eventos.get_nowait()
                 if evento == "start":
-                    if self._escribir_este_dictado:
+                    if self._dictado_voz:
+                        # La palabra clave la oyó el motor local: no viaja en
+                        # el audio, así que se pide el texto marcado. Sin `fin`:
+                        # la frase de cierre la quita el propio cliente.
+                        imprimir("[CLIENTE] Enviando DICTADO_START de voz al servidor...")
+                        self._socket.send_multipart(crear_dictado_start_voz(fin=False))
+                        # Lo guardado mientras se decidía si era orden o texto.
+                        # Va DESPUÉS del START: antes, el servidor lo tiraría.
+                        if self._buffer_voz:
+                            imprimir(
+                                f"[CLIENTE] Enviando {len(self._buffer_voz)} "
+                                "trozos guardados."
+                            )
+                            for trozo in self._buffer_voz:
+                                self._socket.send_multipart(crear_audio(trozo))
+                            self._buffer_voz = []
+                        # A partir de aquí el audio va directo al socket.
+                        self._dictado_enviado = True
+                    elif self._escribir_este_dictado:
                         # Dictado en vivo: el servidor manda el texto por frases
                         imprimir("[CLIENTE] Enviando DICTADO_START en vivo al servidor...")
                         self._socket.send_multipart(crear_dictado_start_vivo())
@@ -1054,6 +1471,658 @@ class ClienteVoz:
                     self._transcripcion_inicio = time.time()
             except queue.Empty:
                 break
+
+    # --- Escucha local de la palabra clave y bandeja ---
+
+    @property
+    def escucha_local_activa(self):
+        return self._escucha_local is not None and self._escucha_local.disponible
+
+    def alternar_escucha_local(self):
+        """Enciende o apaga la escucha de la palabra clave (menú del icono)."""
+        if self.escucha_local_activa:
+            self._apagar_escucha_local()
+        else:
+            self._encender_escucha_local()
+        self._actualizar_bandeja()
+
+    def alternar_comandos(self):
+        """Pausa o reanuda la ejecución de comandos de voz."""
+        self.comandos_activos = not self.comandos_activos
+        imprimir(
+            "[VOZ] Comandos "
+            + (
+                "activados."
+                if self.comandos_activos
+                else "en pausa: lo que digas se escribe como texto."
+            )
+        )
+        self._actualizar_bandeja()
+
+    # --- Cuenta y perfil -------------------------------------------------
+
+    def _cuenta_lista(self):
+        """¿Se puede dictar? Sin cuenta, no (decisión del 2026-11-18)."""
+        if sesion.hay_sesion():
+            return True
+        imprimir(
+            "[CUENTA] Dictado bloqueado: no hay sesión. Entra en el icono de la "
+            "bandeja → Configuración… → Cuenta."
+        )
+        try:
+            reproducir_sonido("error")
+        except Exception:
+            pass
+        return False
+
+    def _bucle_sincronizacion(self):
+        """Pone al día el perfil de la cuenta cada 15 minutos.
+
+        Va en su propia hebra y nunca toca el camino del dictado: si el puente
+        no responde, se sigue dictando y aprendiendo en local.
+        """
+        while self._activo:
+            try:
+                # La dirección del puente puede cambiar desde la ventana.
+                self._config_cuenta = leer_configuracion()
+                if sesion.hay_sesion():
+                    cambios, error = perfil_cuenta.sincronizar(
+                        self._config_cuenta, self._diccionario
+                    )
+                    if error:
+                        imprimir(f"[CUENTA] No se pudo sincronizar: {error}")
+                    elif cambios:
+                        imprimir(f"[CUENTA] Perfil sincronizado ({cambios} cambios).")
+            except Exception as e:  # nunca puede tumbar la hebra
+                imprimir(f"[CUENTA] Error al sincronizar: {e}")
+            for _ in range(15 * 60):
+                if not self._activo:
+                    return
+                time.sleep(1)
+
+    def alternar_dictado(self):
+        """Empieza o termina un dictado, igual que la tecla activadora."""
+        if self._grabando:
+            self._dictado_voz = False
+            self._grabando = False
+            try:
+                _ocultar_indicador()
+            except Exception:
+                pass
+            imprimir("[DETENIDO. Procesando...]")
+            reproducir_sonido("fin")
+            self._cola_eventos.put("stop")
+        else:
+            if not self._cuenta_lista():
+                return
+            self._escribir_este_dictado = self._modo_salida == "escribir"
+            self._dictado_voz = False
+            self._grabando = True
+            try:
+                _mostrar_indicador()
+            except Exception as e:
+                imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+            imprimir("[GRABANDO... «Dictar ahora» otra vez para detener]")
+            reproducir_sonido("inicio")
+            self._cola_eventos.put("start")
+        self._actualizar_bandeja()
+
+    def abrir_registro(self):
+        """Abre la carpeta de logs del cliente (menú del icono)."""
+        base = (
+            os.path.dirname(sys.executable)
+            if getattr(sys, "frozen", False)
+            else os.path.dirname(os.path.abspath(__file__))
+        )
+        carpeta = os.path.join(base, "logs")
+        try:
+            os.startfile(carpeta)
+        except Exception as e:
+            _avisar_usuario("Registro", f"No se pudo abrir {carpeta}: {e}")
+
+    def detener(self):
+        """Cierra el cliente (menú del icono)."""
+        imprimir("[CLIENTE] Cierre pedido desde el icono.")
+        self._activo = False
+
+    def _encender_escucha_local(self):
+        r"""Crea el detector local (Whisper) y lo deja listo.
+
+        Whisper **no abre el micrófono**: se alimenta con los mismos chunks que el
+        cliente ya captura y manda al servidor, así que no hay dos lectores
+        peleando por el dispositivo. Ese era el fallo con SAPI en esta clase de
+        equipos (y en esta PC, además, no hay ningún motor de reconocimiento
+        instalado: `HKLM\SOFTWARE\Microsoft\Speech\Recognizers\Tokens` no
+        existe).
+        """
+        if self.escucha_local_activa:
+            return
+        ruta_modelo = _nombre_modelo_whisper()
+        if not ruta_modelo:
+            imprimir(
+                "[ESCUCHA] No se pudo cargar el modelo de Whisper "
+                f"({ruta_modelo}). La palabra clave queda apagada; el "
+                "dictado por tecla sigue funcionando."
+            )
+            self._escucha_local = None
+            return
+        try:
+            self._escucha_local = EscuchaLocal(
+                clave=self._clave,
+                frase_fin=self._frases_fin,
+                ruta_modelo=ruta_modelo,
+            )
+        except Exception as e:
+            imprimir(f"[ESCUCHA] No se pudo crear la escucha local: {e}")
+            self._escucha_local = None
+            return
+        if not self._escucha_local.disponible:
+            imprimir(f"[ESCUCHA] Escucha local apagada: {self._escucha_local.error}")
+            self._escucha_local = None
+            return
+        imprimir(
+            "[ESCUCHA] escucha local activa (Whisper, "
+            f"{os.path.basename(ruta_modelo)}): di «{self._clave}» para dictar."
+        )
+
+    def _apagar_escucha_local(self):
+        if self._escucha_local is not None:
+            self._escucha_local = None
+            imprimir("[ESCUCHA] Escucha local apagada.")
+
+    def _alimentar_escucha(self, chunk):
+        """Pasa el chunk al detector y actúa según el modo en que estemos.
+
+        - Sin nada en curso: se busca la palabra clave.
+        - **Modo comando** (lo abre la clave): cada frase se resuelve aquí
+          (`_resolver_comando`): orden, consulta al asistente o error.
+        - **Dictado**: se busca la frase de cierre.
+        - En un dictado **por tecla** no se escucha nada.
+        """
+        if self._escucha_local is None:
+            return
+        if self._grabando and not self._dictado_voz:
+            return
+        try:
+            pico = int(np.abs(chunk.astype(np.int32)).max())
+        except Exception:
+            pico = 0
+        if self._dictado_voz and pico >= UMBRAL_VOZ:
+            self._voz_hablado = True
+            self._ultima_voz_modo = time.time()
+            if self._orden_pendiente is not None:
+                # Después de la frase siguió hablando: lo que dijo no era una
+                # orden corta («abre cromo») sino algo más largo. Lo resuelve
+                # `_vigilar_fin_dictado_voz`, que cambia la espera a consulta.
+                self._orden_pendiente["sigue_hablando"] = True
+                self._orden_pendiente["ultima_voz"] = time.time()
+        evento = self._escucha_local.alimentar(chunk)
+        # Traza de lo que reconoce el motor local: sin esto, cuando algo no se
+        # ejecuta no hay forma de saber si lo oyó mal o si no lo oyó.
+        texto_oido = self._escucha_local.ultimo_texto
+        if texto_oido and texto_oido != self._ultimo_texto_oido:
+            self._ultimo_texto_oido = texto_oido
+            imprimir(
+                f"[ESCUCHA] «{texto_oido}» (pico {self._escucha_local.ultimo_pico})"
+            )
+        if evento == "clave" and not self._grabando:
+            # La clave y la orden pueden venir en la MISMA frase («computadora
+            # iniciar dictado»). Se lee antes de abrir la sesión, porque abrirla
+            # reinicia el reconocedor y borra ese resto.
+            resto = self._escucha_local.resto_tras_clave
+            modo = "comando" if self.comandos_activos else "dictado"
+            if modo == "comando":
+                imprimir("[VOZ] Palabra clave detectada; modo comando.")
+            else:
+                # Comandos en pausa desde el icono: la clave dicta directamente.
+                imprimir("[VOZ] Palabra clave detectada (comandos en pausa).")
+            self._al_detectar_clave(self._clave, modo=modo)
+            if resto and self._modo_comando:
+                imprimir(f"[VOZ] Y en la misma frase se oyó: «{resto}».")
+                self._escucha_local.ultimo_texto = resto
+                self._resolver_comando("orden" if es_comando(resto) else "frase")
+        elif evento == "fin":
+            if self._dictado_voz and not self._modo_comando:
+                self._al_cerrar_clave(self._escucha_local.cierre_detectado)
+            else:
+                # Un cierre oído fuera de un dictado se ignora, pero **dejando
+                # rastro**: tragárselo en silencio hacía parecer que no se oía
+                # nada, y así se perdió una sesión de diagnóstico (2026-11-05).
+                imprimir(
+                    "[VOZ] Se oyó un cierre («%s») y no hay dictado abierto; "
+                    "se ignora." % (self._escucha_local.cierre_detectado or "?")
+                )
+        elif evento == "comando" and self._modo_comando:
+            self._resolver_comando("orden")
+        elif evento == "frase" and self._modo_comando:
+            self._resolver_comando("frase")
+
+    def _resolver_comando(self, clase):
+        """Resuelve una frase oída dentro del modo comando.
+
+        `clase` es «orden» (el motor local la reconoció como verbo o frase de
+        sistema) o «frase» (cualquier otra cosa). Cuatro salidas:
+
+        - **dictado**: se dijo «iniciar dictado» → se pasa a transcribir texto.
+        - **corto**: el argumento está en `comandos_windows.json` («abre
+          calculadora») → se ejecuta aquí, suena `orden` y al servidor no se le
+          manda nada.
+        - **consulta local**: saludos y la hora (`voz_asistente`), sin gastar API.
+        - **espera**: lo demás se queda esperando **silencio** de
+          `ORDEN_SILENCIO_SEGUNDOS`; al llegar, el audio se manda al servidor
+          para que corrija el argumento de la orden o para que el asistente
+          responda la consulta.
+        """
+        texto = (
+            self._escucha_local.ultimo_texto
+            if self._escucha_local is not None else ""
+        )
+        if not (texto or "").strip():
+            return
+
+        # «Iniciar dictado» y sus variantes: se cambia de modo.
+        accion, argumento = parsear(texto)
+        if clase == "orden" and accion and not argumento:
+            destino = resolver(accion, argumento)
+            if destino is not None and destino[0] == "dictar":
+                self._abrir_dictado_desde_comando()
+                return
+
+        orden = self._orden_local(texto)
+        if orden is not None:
+            accion, argumento = orden
+            imprimir(
+                f"[VOZ] Orden local: «{accion}» → "
+                f"«{argumento or '(sin argumento)'}»; no se envía nada al "
+                "servidor."
+            )
+            self._terminar_dictado_voz("orden local", enviar=False, sonido=None)
+            threading.Thread(
+                target=_ejecutar_y_avisar, args=(accion, argumento), daemon=True
+            ).start()
+            return
+
+        # Saludos y preguntas de reloj: se contestan aquí, sin gastar API.
+        simple = buscar_comando_simple(texto)
+        if simple:
+            imprimir(f"[VOZ] Respuesta local a «{texto}».")
+            self._terminar_dictado_voz("respuesta local", enviar=False, sonido=None)
+            threading.Thread(
+                target=_hablar_respuesta, args=(simple,), daemon=True
+            ).start()
+            return
+
+        palabras = len((argumento or "").split())
+        if clase == "orden" and palabras > ORDEN_MAX_PALABRAS_ARGUMENTO:
+            # «abre cromo azul y lo pinto de verde»: no es una orden corta, es
+            # una frase. Se trata como consulta.
+            clase = "consulta"
+        elif clase == "orden":
+            # Orden con 0-2 palabras de argumento que el catálogo no conoce.
+            clase = "orden"
+        else:
+            clase = "consulta"
+
+        imprimir(
+            f"[VOZ] «{texto}» → {clase}; espero "
+            f"{ORDEN_SILENCIO_SEGUNDOS:.0f} s de silencio para mandarla al "
+            "servidor."
+        )
+        ahora = time.time()
+        self._orden_pendiente = {
+            "texto": texto,
+            "clase": clase,
+            "ultima_voz": ahora,
+            "sigue_hablando": False,
+        }
+
+    def _abrir_dictado_desde_comando(self):
+        """Se dijo «iniciar dictado»: se pasa a transcribir texto.
+
+        Se descarta lo hablado hasta ahora (la clave y el propio comando: no
+        deben llegar a Whisper) y se pide el `DICTADO_START`. Se cierra como
+        siempre, con una de las frases de cierre.
+        """
+        imprimir("[VOZ] Comando «iniciar dictado»: se abre el dictado.")
+        reproducir_sonido("inicio")
+        self._modo_comando = False
+        self._orden_pendiente = None
+        self._buffer_voz = []
+        self._voz_empezo = time.time()
+        self._ultima_voz_modo = self._voz_empezo
+        # Ya se habló (el comando), así que el seguro de «no se oyó nada» no
+        # debe cerrar el dictado enseguida.
+        self._voz_hablado = True
+        self._pasar_a_servidor()
+
+    def _orden_local(self, texto):
+        """Resuelve la orden con lo que oyó el motor local, sin el servidor.
+
+        Devuelve `(accion, argumento)` listo para `ejecutar_comando()`, o None
+        si hay que preguntarle al servidor: el argumento tiene que estar en el
+        catálogo de `comandos_windows.json`, si no es que se oyó mal.
+        """
+        accion, argumento = parsear(texto)
+        if not accion:
+            return None
+        traducida = resolver(accion, argumento)
+        if traducida is None:
+            return None
+        accion_local, argumento_local = traducida
+
+        if accion_local == "cerrar":
+            if _buscar_programa("cerrar", argumento_local, avisar=False):
+                return "cerrar", argumento_local
+            return None
+
+        if accion_local == "abre":
+            if _buscar_programa("abre", argumento_local, avisar=False):
+                return "abre", argumento_local
+            # No es un programa: ¿una página web? («abre youtube»).
+            sitio = _resolver_sitio(argumento_local)
+            if sitio:
+                return "web", sitio
+            return None
+
+        if accion_local == "web":
+            sitio = _resolver_sitio(argumento_local)
+            if sitio:
+                return "web", sitio
+            return None
+
+        if accion_local == "buscar":
+            if (argumento_local or "").strip():
+                return "buscar", argumento_local
+            return None
+
+        return accion_local, argumento_local
+
+    def _orden_corregida(self, texto):
+        """Ejecuta (o rechaza) la orden que el servidor devolvió corregida.
+
+        Solo se llama cuando el cliente le mandó el audio para que corrigiera
+        el argumento de una orden («abre cromo»). El texto vuelve **limpio** —el
+        servidor ya no marca comandos—, así que se vuelve a interpretar aquí: si
+        sale una orden que el catálogo conoce, se ejecuta y suena `orden`; si no,
+        suena `error` y la razón queda en el registro. En ninguno de los dos
+        casos se escribe nada en el documento: ahí iría basura.
+        """
+        texto = quitar_frase_cierre(texto)
+        if not self.comandos_activos:
+            imprimir("[VOZ] Comandos en pausa: se escribe lo que dictó.")
+            self._entregar_texto(texto)
+            return
+
+        accion, argumento = parsear(texto)
+        traducida = resolver(accion, argumento) if accion else None
+        if traducida is None:
+            imprimir(
+                f"[VOZ] El servidor devolvió «{texto}», que no empieza por una "
+                "orden conocida; no se escribe nada."
+            )
+            reproducir_sonido("error")
+            return
+
+        # La misma resolución que el camino corto: programas, sitios web,
+        # búsquedas y acciones del sistema.
+        orden = self._orden_local(texto)
+        if orden is None:
+            imprimir(
+                f"[VOZ] El servidor devolvió «{texto}» y el argumento no está "
+                "en ningún catálogo de comandos."
+            )
+            reproducir_sonido("error")
+            return
+
+        accion_local, argumento_local = orden
+
+        imprimir(
+            f"[VOZ] Orden corregida por el servidor: «{accion_local}» → "
+            f"«{argumento_local or '(sin argumento)'}»"
+        )
+        # `avisar=False`: el aviso de un fallo queda en el registro, sin diálogo.
+        threading.Thread(
+            target=_ejecutar_y_avisar,
+            args=(accion_local, argumento_local, False),
+            daemon=True,
+        ).start()
+
+    def _responder_consulta(self, texto):
+        """Contesta una frase que no era un comando.
+
+        La transcripción viene de Whisper (el audio se mandó al servidor), así
+        que la pregunta llega bien escrita. Primero se miran los comandos
+        simples de `voz_asistente` (la hora, el día, los saludos), que no gastan
+        API; si no hay coincidencia, se le pregunta a DeepSeek. La respuesta se
+        **habla**: no se escribe nada en el documento.
+        """
+        texto = quitar_frase_cierre(texto).strip()
+        imprimir(f"[VOZ] Consulta: «{texto}»")
+        if not texto:
+            imprimir("[VOZ] La consulta llegó vacía; no hay nada que preguntar.")
+            reproducir_sonido("error")
+            return
+
+        # Red de seguridad: el camino se eligió al vuelo, pero lo que devolvió
+        # Whisper puede empezar por una orden («Iniciar dictado. Probando 1, 2,
+        # 3»). Se prueba como comando antes de molestar a la IA.
+        orden = self._orden_local(texto)
+        if orden is not None:
+            accion_local, argumento_local = orden
+            if accion_local == "dictar":
+                imprimir(
+                    "[VOZ] Era «iniciar dictado», no una consulta: abro el "
+                    "dictado."
+                )
+                self._al_detectar_clave(self._clave, modo="dictado")
+                return
+            imprimir(
+                f"[VOZ] Era una orden, no una consulta: «{accion_local}» → "
+                f"«{argumento_local or '(sin argumento)'}»"
+            )
+            threading.Thread(
+                target=_ejecutar_y_avisar,
+                args=(accion_local, argumento_local, False),
+                daemon=True,
+            ).start()
+            return
+
+        respuesta = buscar_comando_simple(texto)
+        if respuesta is None:
+            respuesta = preguntar_deepseek(texto)
+        if not respuesta:
+            imprimir(
+                "[VOZ] Sin respuesta: falta DEEPSEEK_API_KEY, no hay internet o "
+                "la consulta tardó más de 15 s."
+            )
+            reproducir_sonido("error")
+            return
+        imprimir(f"[VOZ] Respuesta: {respuesta}")
+        threading.Thread(
+            target=_hablar_respuesta, args=(respuesta,), daemon=True
+        ).start()
+
+    def _al_detectar_clave(self, texto="", modo="comando"):
+        """El motor local oyó la palabra clave: abre la sesión.
+
+        `modo="comando"` (lo normal): queda esperando una orden; no se manda
+        nada al servidor todavía. `modo="dictado"` es lo que pasa con los
+        comandos en pausa desde el icono: dicta texto directamente.
+        """
+        if self._grabando:
+            imprimir("[VOZ] Ya hay un dictado en curso; la clave se ignora.")
+            return
+        if not self._cuenta_lista():
+            return
+        self._escribir_este_dictado = self._modo_salida == "escribir"
+        self._dictado_voz = True
+        self._voz_empezo = time.time()
+        self._ultima_voz_modo = self._voz_empezo
+        self._voz_hablado = False
+        self._frase_cierre = ""
+        self._orden_pendiente = None
+        self._esperando = None
+        self._modo_comando = modo == "comando"
+        self._grabando = True
+        if self._modo_comando:
+            imprimir(
+                f"[VOZ] Palabra clave «{texto or self._clave}» → modo comando "
+                "(di la orden o «iniciar dictado»)."
+            )
+        else:
+            imprimir(f"[VOZ] Palabra clave «{texto or self._clave}» → dictado.")
+        reproducir_sonido("inicio")
+        try:
+            _mostrar_indicador()
+        except Exception as e:
+            imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+        # En modo comando NO se le dice nada al servidor: primero hay que saber
+        # si lo que viene es una orden, una consulta o un dictado.
+        self._dictado_enviado = False
+        self._start_encolado = False
+        self._buffer_voz = []
+        self._actualizar_bandeja()
+
+    def _al_cerrar_clave(self, texto=""):
+        """El motor local oyó la frase de cierre: se cierra el dictado.
+
+        Se guarda **qué** frase se oyó: al llegar el texto hay que quitarla del
+        final, y el servidor ya no sabe de ella (no se le manda `fin`).
+        """
+        frase = (texto or "").strip()
+        if self._escucha_local is not None:
+            frase = self._escucha_local.cierre_detectado or frase
+        self._frase_cierre = frase
+        self._terminar_dictado_voz(f"«{frase}»" if frase else "frase de cierre")
+
+    def _vigilar_fin_dictado_voz(self, pico):
+        """Resuelve la espera pendiente y cierra la sesión de voz.
+
+        - Con una frase esperando: al cumplirse `ORDEN_SILENCIO_SEGUNDOS` se
+          manda al servidor —la orden, para que corrija el argumento, o la
+          consulta, para que responda el asistente—. Si el usuario siguió
+          hablando, lo dicho ya no es una orden corta: pasa a consulta.
+        - **Dictado**: se cierra con la frase de cierre, con 6 s sin voz o con
+          el tope de 180 s.
+        - **Modo comando**: se cierra con 6 s sin voz o con el tope de 15 s. En
+          ese caso no se transcribe nada: no había comando.
+        """
+        if not (self._dictado_voz and self._grabando):
+            return
+        ahora = time.time()
+        if pico >= UMBRAL_VOZ:
+            self._voz_hablado = True
+
+        if self._orden_pendiente is not None:
+            pendiente = self._orden_pendiente
+            if pendiente["sigue_hablando"] and pendiente["clase"] == "orden":
+                imprimir(
+                    f"[VOZ] Después de «{pendiente['texto']}» siguió hablando: "
+                    "es una consulta, no una orden corta."
+                )
+                pendiente["clase"] = "consulta"
+            if ahora - pendiente["ultima_voz"] >= ORDEN_SILENCIO_SEGUNDOS:
+                clase = pendiente["clase"]
+                imprimir(
+                    f"[VOZ] {ORDEN_SILENCIO_SEGUNDOS:.0f} s de silencio tras "
+                    f"«{pendiente['texto']}»: {clase} al servidor."
+                )
+                self._orden_pendiente = None
+                self._esperando = clase
+                # Sin pitido al cerrar: el aviso es el `orden`, el `texto` de la
+                # respuesta o el `error`, y los pone el servidor al contestar.
+                self._terminar_dictado_voz(
+                    f"{clase} por silencio (al servidor)", sonido=None
+                )
+                return
+
+        if self._modo_comando:
+            if ahora - self._ultima_voz_modo > MODO_COMANDO_MAX_SEGUNDOS:
+                self._cerrar_modo_comando(
+                    f"{MODO_COMANDO_MAX_SEGUNDOS:.0f} s sin oír nada más"
+                )
+            return
+
+        if ahora - self._voz_empezo >= DICTADO_VOZ_MAX_SEGUNDOS:
+            self._terminar_dictado_voz("tope de tiempo")
+        elif (not self._voz_hablado
+              and ahora - self._voz_empezo >= DICTADO_VOZ_SIN_VOZ_SEGUNDOS):
+            self._terminar_dictado_voz("no se oyó nada")
+
+    def _cerrar_modo_comando(self, motivo):
+        """Cierra el modo comando sin transcribir nada (disparo por error).
+
+        A diferencia de un dictado, aquí no hay texto que mandar: si nadie dijo
+        un comando, al servidor no se le pide nada. Se avisa con el pitido de
+        error porque la palabra clave no llevó a ninguna parte.
+        """
+        imprimir(
+            f"[VOZ] Modo comando cerrado: {motivo} "
+            f"(abierto hace {time.time() - self._voz_empezo:.1f} s)."
+        )
+        self._terminar_dictado_voz(motivo, enviar=False, sonido="error")
+
+    def _pasar_a_servidor(self):
+        """Decide que esto es texto: se pide el dictado al servidor.
+
+        El audio guardado se suelta en `_procesar_eventos`, **después** del
+        `DICTADO_START`: si llegara antes, el servidor lo descartaría. Por eso
+        el audio sigue guardándose hasta que el evento se procesa.
+        """
+        if self._start_encolado:
+            return
+        self._start_encolado = True
+        imprimir(
+            f"[VOZ] Es texto: se envía al servidor con los "
+            f"{len(self._buffer_voz)} trozos guardados."
+        )
+        self._cola_eventos.put("start")
+
+    def _terminar_dictado_voz(self, motivo="", enviar=True, sonido="fin"):
+        """Cierra el dictado de voz.
+
+        `enviar=False` es el camino corto: la orden ya se ejecutó aquí y al
+        servidor no se le manda nada, ni el audio guardado.
+        """
+        if not self._dictado_voz:
+            return
+        self._dictado_voz = False
+        self._grabando = False
+        self._voz_hablado = False
+        self._modo_comando = False
+        self._orden_pendiente = None
+        detalle = f" ({motivo})" if motivo else ""
+        imprimir(f"[VOZ] Dictado terminado{detalle}. Procesando...")
+        # Confirmación inmediata: el texto todavía tiene que transcribirse en el
+        # servidor (2-10 s). Este pitido dice «te oí, cierro»; el pip de «texto»
+        # llegará cuando esté en el portapapeles.
+        reproducir_sonido(sonido)
+        try:
+            _ocultar_indicador()
+        except Exception:
+            pass
+        if enviar:
+            # Si aún no se había pedido el dictado, lo que hay es texto: se
+            # manda ahora, con lo que se guardó durante la decisión.
+            self._pasar_a_servidor()
+            self._cola_eventos.put("stop")
+        else:
+            self._buffer_voz = []
+        self._actualizar_bandeja()
+
+    def _actualizar_bandeja(self):
+        """Pone el color del icono según lo que esté pasando."""
+        if self._bandeja is None:
+            return
+        if self._grabando:
+            estado = "grabando"
+        elif not self.escucha_local_activa:
+            estado = "apagado"
+        elif not self.comandos_activos:
+            estado = "pausado"
+        else:
+            estado = "escuchando"
+        self._bandeja.actualizar(estado)
 
     def _escribir_en_cursor(self, texto):
         """Escribe el texto en la ventana activa, donde esté el cursor.
@@ -1129,6 +2198,9 @@ def _avisar_usuario(titulo, texto):
     ningún mensaje cuando el dictado falla.
     """
     imprimir(f"[AVISO] {titulo}: {texto}")
+    # Un aviso es un problema: se oye aunque no se esté mirando la pantalla.
+    # Es un tono distinto del inicio, del cierre y del texto listo.
+    reproducir_sonido("error")
     if sys.platform == "win32":
         # En un hilo aparte: el cuadro de diálogo es modal y no debe
         # detener el bucle principal del cliente.
@@ -1196,6 +2268,133 @@ def _comando_autostart():
     return f'"{python}" "{script}"'
 
 
+def _probar_escucha(segundos=20.0):
+    """Detecta la palabra clave con Whisper, sin arrancar el cliente.
+
+    Abre el micrófono con `sounddevice` (el mismo camino que el cliente) y le
+    pasa los chunks al detector. No usa el motor de voz de Windows: SAPI necesita
+    un motor de reconocimiento instalado y, además, se pelea por el micrófono
+    con la captura del cliente.
+
+    Uso: ClienteVoz.exe --probar-escucha [segundos]
+    """
+    clave, frases_fin = cargar_palabras_escucha()
+    ruta_modelo = _nombre_modelo_whisper()
+
+    escucha = EscuchaLocal(
+        clave=clave, frase_fin=frases_fin, ruta_modelo=ruta_modelo
+    )
+    if not escucha.disponible:
+        _mensaje_windows(
+            "Prueba de escucha",
+            "No se pudo cargar el modelo de Whisper "
+            f"({ruta_modelo}):\n\n{escucha.error}",
+        )
+        return
+
+    imprimir(
+        f"[PRUEBA] Whisper cargado ({os.path.basename(ruta_modelo)}). Di «{clave}» "
+        f"y después «{frases_fin[0]}» en los próximos {segundos:.0f} s."
+    )
+    detectadas = []
+
+    def procesar(indata, frames, time_info, status):
+        evento = escucha.alimentar(indata)
+        if evento == "clave":
+            detectadas.append(clave)
+            imprimir("[PRUEBA] Palabra clave oída.")
+            reproducir_sonido("inicio")
+        elif evento == "fin":
+            imprimir("[PRUEBA] Frase de cierre oída.")
+            reproducir_sonido("fin")
+
+    try:
+        with sd.InputStream(
+            samplerate=16000,
+            channels=1,
+            dtype="int16",
+            blocksize=1024,
+            callback=procesar,
+        ):
+            time.sleep(segundos)
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        _mensaje_windows("Prueba de escucha", f"No se pudo abrir el micrófono: {e}")
+        return
+
+    if detectadas:
+        detalle = (
+            "Funciona. Puedes encender «Escucha continua» en el icono de la "
+            "bandeja o poner \"escucha_local\": true en comandos_windows.json."
+        )
+    else:
+        detalle = (
+            "No se oyó la palabra clave. Revisa que el micrófono predeterminado "
+            "sea el que usas, que no esté muteado y que el modelo esté copiado "
+            "junto al ClienteVoz.exe."
+        )
+    _mensaje_windows(
+        "Prueba de escucha",
+        f"Se oyó la palabra clave {len(detectadas)} vez/veces.\n\n{detalle}",
+    )
+
+
+class _ClienteFalso:
+    """Sustituto mínimo del cliente para probar el icono sin arrancar nada."""
+
+    escucha_local_activa = False
+    comandos_activos = True
+
+    def alternar_escucha_local(self):
+        self.escucha_local_activa = not self.escucha_local_activa
+        imprimir(f"[PRUEBA] Escucha continua: {self.escucha_local_activa}")
+
+    def alternar_comandos(self):
+        self.comandos_activos = not self.comandos_activos
+        imprimir(f"[PRUEBA] Comandos por voz: {self.comandos_activos}")
+
+    def alternar_dictado(self):
+        imprimir("[PRUEBA] «Dictar ahora» pulsado.")
+
+    def abrir_registro(self):
+        imprimir("[PRUEBA] «Ver registro» pulsado.")
+
+    def detener(self):
+        imprimir("[PRUEBA] «Salir» pulsado.")
+
+
+def _probar_bandeja(segundos=30.0):
+    """Pone el icono de la bandeja sin abrir audio ni sockets.
+
+    Sirve para saber si el icono funciona en esta PC: si aparece, el problema
+    está en otra parte del cliente; si no aparece, el aviso dice qué falta.
+
+    En Windows 11 los iconos nuevos se quedan escondidos dentro de la flecha ^
+    del área de notificación hasta que se activan en Configuración →
+    Personalización → Barra de tareas → Otros iconos del sistema.
+    """
+    cliente = _ClienteFalso()
+    bandeja = iniciar_en_hilo(cliente, al_fallar=_avisar_usuario)
+    imprimir(
+        "[PRUEBA] Icono puesto: búscalo en el área de notificación (Windows 11: "
+        f"dentro de la flecha ^). Se retira en {segundos:.0f} s."
+    )
+    try:
+        time.sleep(segundos)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bandeja.detener()
+    _mensaje_windows(
+        "Prueba de la bandeja",
+        "Si viste el icono (un círculo con un micrófono), el icono funciona.\n\n"
+        "En Windows 11 los iconos nuevos se esconden dentro de la flecha ^ del "
+        "área de notificación: se activan en Configuración → Personalización → "
+        "Barra de tareas → Otros iconos del sistema.",
+    )
+
+
 def _instalar_autostart():
     _asegurar_config()
     nombre_tarea = "ClienteVoz"
@@ -1234,7 +2433,7 @@ def _desinstalar_autostart():
 
 if __name__ == "__main__":
     rotar_logs_al_iniciar()
-    imprimir("=== CLIENTE DE DICTADO POR VOZ ===")
+    imprimir("=== CLIENTE DE SKIPKEY ===")
 
     args = sys.argv[1:]
 
@@ -1258,6 +2457,38 @@ if __name__ == "__main__":
         _probar_microfono(segundos)
         sys.exit(0)
 
+    # Diagnóstico de la escucha local: solo oye la palabra clave y la muestra
+    if "--probar-escucha" in args:
+        indice = args.index("--probar-escucha")
+        segundos = 20.0
+        if indice + 1 < len(args):
+            try:
+                segundos = float(args[indice + 1])
+            except ValueError:
+                pass
+        _probar_escucha(segundos)
+        sys.exit(0)
+
+    # Diagnóstico del icono de la bandeja: no arranca el cliente, solo el icono
+    if "--probar-bandeja" in args:
+        indice = args.index("--probar-bandeja")
+        segundos = 30.0
+        if indice + 1 < len(args):
+            try:
+                segundos = float(args[indice + 1])
+            except ValueError:
+                pass
+        _probar_bandeja(segundos)
+        sys.exit(0)
+
+    # Ventana de configuración (la abre el icono de la bandeja, y también el
+    # propio .exe: en el ejecutable congelado no hay un .py que lanzar).
+    if "--configuracion" in args:
+        import ventana_configuracion
+
+        ventana_configuracion.main()
+        sys.exit(0)
+
     _asegurar_config()
 
     direccion = None
@@ -1266,7 +2497,6 @@ if __name__ == "__main__":
             direccion = f"tcp://{args[i + 1]}"
         elif arg.startswith("--servidor="):
             direccion = f"tcp://{arg.split('=', 1)[1]}"
-
     if direccion is None:
         direccion = f"tcp://{_servidor_por_defecto()}"
 

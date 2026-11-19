@@ -9,8 +9,13 @@ Salida: dist\\ClienteVoz.exe
 from PyInstaller.utils.hooks import collect_all
 
 # --- Paquetes con datos/binarios/hidden-imports especiales (Windows) ---
+# `faster_whisper` trae ctranslate2 (DLL nativas), tokenizers y av: hay que
+# recolectarlos o el .exe arranca y falla al cargar el modelo de la escucha.
 _datos_extra, _binarios_extra, _ocultos_extra = [], [], []
-for _paquete in ("pycaw", "comtypes"):
+for _paquete in (
+    "pycaw", "comtypes", "pystray", "PIL", "cffi",
+    "faster_whisper", "ctranslate2", "tokenizers", "av", "huggingface_hub",
+):
     try:
         _d, _b, _h = collect_all(_paquete)
         _datos_extra += _d
@@ -38,6 +43,24 @@ a = Analysis(
         "pygame",
         "indicador_grabacion",
         "protocolo",
+        "marcas",
+        "skills",
+        "ventana_configuracion",
+        "bandeja",
+        "escucha_local",
+        # Cuenta y perfil (2026-11-18). Se importan desde cliente_voz.py y desde
+        # ventana_configuracion.py; van aquí para que el .exe no arranque sin
+        # ellos si algún día el import pasa a ser dinámico.
+        "perfil",
+        "sesion",
+        "diccionario_desktop",
+        # Vosk importa estos en su __init__, pero PyInstaller solo analiza
+        # «vosk»: sin ellos el exe arranca y falla con
+        # «No module named 'srt'» al cargar el modelo.
+        "srt",
+        "tqdm",
+        "websockets",
+        "_cffi_backend",
         "utils_logging",
         "sonidos",
         "voz_asistente",
@@ -45,8 +68,11 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # El cliente no usa el modelo de voz del servidor: se excluyen para reducir tamaño
-    excludes=["vosk", "whisper", "torch", "scipy", "openai", "tensorflow"],
+    # Modelos y librerías del SERVIDOR: no hacen falta en el cliente y pesan
+    # cientos de MB. `vosk` NO va aquí: el cliente lo usa para la palabra clave
+    # (excluirlo dejaba el exe sin sus dependencias y fallaba con
+    # «No module named 'srt'» al cargar el modelo).
+    excludes=["whisper", "torch", "scipy", "openai", "tensorflow"],
     noarchive=False,
 )
 

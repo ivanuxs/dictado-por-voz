@@ -9,7 +9,7 @@
     eso `media_play_pause` en comandos.json no puede funcionar.
 
 Qué hace este archivo:
-    Publica un reproductor MPRIS llamado «Dictado por Voz». Al pulsar el
+    Publica un reproductor MPRIS llamado «SkipKey». Al pulsar el
     botón del auricular:
       - un toque  (PlayPause / Play / Pause) -> SIGUSR1: dictado normal.
       - dos toques (Next / Previous)         -> SIGUSR2: escribir en el cursor.
@@ -95,9 +95,9 @@ class ReproductorDictado(dbus.service.Object):
                         "/org/mpris/MediaPlayer2/TrackList/NoTrack",
                         variant_level=1,
                     ),
-                    "xesam:title": dbus.String("Dictado por Voz", variant_level=1),
+                    "xesam:title": dbus.String("SkipKey", variant_level=1),
                     "xesam:artist": dbus.Array(
-                        [dbus.String("Dictado por Voz")],
+                        [dbus.String("SkipKey")],
                         signature="s",
                         variant_level=1,
                     ),
@@ -127,7 +127,7 @@ class ReproductorDictado(dbus.service.Object):
                 "CanQuit": dbus.Boolean(False, variant_level=1),
                 "CanRaise": dbus.Boolean(False, variant_level=1),
                 "HasTrackList": dbus.Boolean(False, variant_level=1),
-                "Identity": dbus.String("Dictado por Voz", variant_level=1),
+                "Identity": dbus.String("SkipKey", variant_level=1),
                 "DesktopEntry": dbus.String("", variant_level=1),
                 "SupportedUriSchemes": dbus.Array([], signature="s", variant_level=1),
                 "SupportedMimeTypes": dbus.Array([], signature="s", variant_level=1),
@@ -317,7 +317,7 @@ def main():
             signal.signal(senal, lambda *_: bucle.quit())
 
     _escribir(
-        f"reproductor «Dictado por Voz» publicado (modo={MODO}, doble="
+        f"reproductor «SkipKey» publicado (modo={MODO}, doble="
         f"{'sí' if USAR_DOBLE else 'no'}). El botón del auricular ya puede dictar."
     )
     bucle.run()

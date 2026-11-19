@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SkipKey
+GenericName=Dictado por voz
+Comment=Dicta texto y ejecuta comandos del sistema con la voz
+Exec=skipkey
+Icon=skipkey
+Terminal=false
+Categories=Utility;Accessibility;
+StartupNotify=false

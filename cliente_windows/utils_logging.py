@@ -31,6 +31,31 @@ CLASS_LOG_FILES = {
 # Variable para archivo de log por defecto
 DEFAULT_LOG_FILE = "registro_agente_informacion.log"
 
+
+def directorio_logs():
+    """Carpeta donde se escriben los registros.
+
+    En Linux van a `$XDG_STATE_HOME/skipkey/logs` (por defecto
+    `~/.local/state/skipkey/logs`), para que el programa instalado en
+    `~/.local/share/skipkey` no tenga que escribir en su propia carpeta y el
+    usuario los encuentre siempre en el mismo sitio.
+
+    En Windows se mantiene junto al `.exe` (o al script), que es donde el
+    cliente ya instalado los deja y donde el menú del icono los busca.
+    """
+    if sys.platform == "win32":
+        if getattr(sys, "frozen", False):
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base, "logs")
+
+    estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+        "~/.local/state"
+    )
+    return os.path.join(estado, "skipkey", "logs")
+
+
 def set_caller_info_level(level: int):
     """
     Configura el nivel de información del caller.
@@ -195,13 +220,8 @@ def imprimir(cadena, archivo_log=None):
             log_file = f"registro_{caller_fname}.log"
 
         # 3. Determinar directorio y ruta final
-        if getattr(sys, "frozen", False):
-            # Ejecutable empaquetado: logs junto al exe (no en la carpeta temporal)
-            base_dir = os.path.dirname(sys.executable)
-        else:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-        logs_dir = os.path.join(base_dir, "logs")
-        
+        logs_dir = directorio_logs()
+
         if not os.path.exists(logs_dir):
             try:
                 os.makedirs(logs_dir, exist_ok=True)
@@ -439,12 +459,8 @@ def rotar_logs_al_iniciar(filtro=None, logs_dir=None):
     import shutil
     from datetime import datetime
 
-    # Configurar directorio de logs: junto al exe si es ejecutable empaquetado
-    if getattr(sys, "frozen", False):
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-    logs_folder = os.path.join(base_dir, "logs")
+    # Configurar directorio de logs: XDG en Linux, junto al exe en Windows
+    logs_folder = directorio_logs()
     
     # Asegurar que existe la carpeta de logs
     if not os.path.exists(logs_folder):

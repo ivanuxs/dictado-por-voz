@@ -12,5 +12,8 @@ sounddevice
 pynput
 pyautogui
 pyperclip
-edge-tts
+edge-tts>=7.3.1
 requests
+# Detección local de la palabra clave y de las órdenes (escucha_local.py).
+# Descarga el modelo `base` (~142 MB) a ~/.cache/huggingface la primera vez.
+faster-whisper
