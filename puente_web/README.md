@@ -28,7 +28,7 @@ Android (IME) ──HTTPS/WSS──▶ nginx (192.168.1.100) ──▶ este puen
 ## Instalación
 
 ```bash
-cd "~/Nextcloud/Proyectos/dictado por voz"
+cd "~/Nextcloud/Proyectos/SkipKey"
 
 # 1. Entorno virtual (Python 3.14)
 python3 -m venv entorno_web
@@ -119,7 +119,107 @@ parciales llegan mientras se habla, sin procesar nada extra.
 ### `GET /api/v1/salud` y `GET /api/v1/estado`
 
 `/salud` responde `{"status":"ok"}` sin token (para la comprobación de salud de
-nginx). `/estado` exige token y además hace un `PING` al servidor de dictado.
+nginx). `/estado` exige token y además hace un `PING` al servidor de dictado y
+dice si la traducción tiene modelos (`"traduccion": "lista"` / `"sin modelos"`).
+
+### `POST /api/v1/traducir` — traducción de texto
+
+Traduce lo escrito en el teclado del celular. **No toca el servidor de dictado**:
+corre en este mismo proceso, en CPU, con modelos Opus-MT cargados bajo demanda.
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/traducir \
+  -H "Authorization: Bearer $DICTADO_WEB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"texto": "Hola, ¿cómo estás?", "destino": "en"}'
+# {"status":"ok","texto":"Hey, how are you?","origen":"es","destino":"en","ms":420}
+```
+
+- `origen` es opcional (`"auto"` por defecto): se adivina con reglas simples
+  (caracteres Han → chino, `ã õ ç â ê` → portugués, palabras inglesas frecuentes
+  → inglés; si no, español).
+- Idiomas: `es`, `en`, `pt`, `it`, `zh`.
+- Pares directos: `es↔en`, `es↔it`, `en↔zh`, `en↔pt` (este con los modelos de
+  lenguas romances y el token `>>por<<`). El resto pasa por **inglés**:
+  `es→zh` = `es→en→zh`.
+- `422` si el idioma no existe, el texto está vacío o pasa de
+  `DICTADO_MAX_CARACTERES` (2 000 por defecto). `503` si hay otra traducción en
+  marcha o la traducción está apagada (`DICTADO_TRADUCCION=0`).
+
+Los modelos van en `modelos/` (fuera de Git) y se descargan con:
+
+```bash
+python3 puente_web/herramientas/preparar_modelos.py      # ~300 MB por modelo
+```
+
+⚠️ **No se convierten a CTranslate2.** Probado el 2026-10-31: la conversión de
+estos Marian repetía la frase tres veces (int8 y fp32, beam 1/2/5, con y sin
+`end_token`, transformers 4 y 5). Con el modelo original, `generate` traduce
+bien. El puente necesita por eso `torch` (CPU), `transformers`, `sentencepiece`
+y `sacremoses` en `entorno_web`:
+
+```bash
+entorno_web/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+entorno_web/bin/pip install -r puente_web/requirements.txt
+```
+
+Cada modelo cargado ocupa ~300 MB de RAM y se guardan como mucho **dos** a la
+vez (`MAX_EN_MEMORIA` en `traduccion.py`). La primera traducción de cada par
+tarda 1–3 s en cargar; después, 0,3–0,8 s por frase corta en CPU.
+
+## Cuentas y planes
+
+La app se publica en **Google Play**, así que el registro está **abierto**: cualquiera
+que la descargue se crea su cuenta desde el propio teclado. Sin cuenta se dicta igual,
+con el motor del celular; **el servidor y las funciones avanzadas son de pago**.
+
+| Ruta | Qué hace |
+|---|---|
+| `POST /api/v1/registro` | Crea la cuenta (**usuario** + contraseña ≥ 8; correo opcional). Si hay SMTP y se dio correo, manda un código de 6 números. |
+| `POST /api/v1/verificar` | Confirma el correo con el código y devuelve el token del dispositivo. |
+| `POST /api/v1/reenviar` | Manda otro código (caducó o no llegó). |
+| `POST /api/v1/login` | Entra con **usuario** (o el correo de una cuenta vieja) y devuelve el token de ESTE dispositivo. |
+| `POST /api/v1/salir` | Revoca el token de este dispositivo. |
+| `GET /api/v1/yo` | Usuario, plan, consumo de hoy y perfil. |
+| `GET /api/v1/planes` | Catálogo de planes. **Público**: se ve sin cuenta. |
+| `POST /api/v1/contrasena` | Cambia la contraseña (cierra las demás sesiones). |
+| `DELETE /api/v1/cuenta` | Borra la cuenta y todo lo suyo, perfil incluido (Google Play lo exige). |
+| `GET /api/v1/perfil` | Perfil de la cuenta: nombre, `revision` y ajustes. |
+| `PUT /api/v1/perfil/ajustes` | Guarda los ajustes. Con `revision` vieja responde `"status": "conflicto"` en vez de pisar. |
+| `GET /api/v1/perfil/diccionario?desde=` | Diccionario aprendido (o solo lo cambiado desde una fecha). |
+| `POST /api/v1/perfil/diccionario` | Sube el lote aprendido en el aparato y devuelve el diccionario fusionado. |
+| `GET /api/v1/perfil/sustituciones?desde=` | Correcciones del dictado (`antes` → `despues`). |
+| `POST /api/v1/perfil/sustituciones` | Sube el lote de correcciones y devuelve las fusionadas. |
+
+**La identidad es el nombre de usuario, no el correo.** El nombre va en minúsculas, de 3
+a 24 caracteres (`[a-z0-9._-]`, empezando por letra o número) y es único; el correo solo
+sirve para confirmar y recuperar. Una base con el esquema viejo (correo obligatorio) se
+migra sola al arrancar, conservando `id`, cuentas y tokens.
+
+**El perfil cuelga de la cuenta**: ajustes, diccionario y correcciones son de esa persona
+y de nadie más. Dos cuentas en el mismo celular no comparten nada, y el token maestro no
+tiene perfil (403). Al fusionar: `veces` es el máximo (no la suma), `conocida` solo avanza,
+`olvidada` lo decide la fecha más reciente y la fila no se borra (si se borrara, el otro
+aparato la resubiría). Sincronizar diccionario y correcciones exige plan Básico o Pro;
+los ajustes se guardan con cualquier plan.
+
+- Base de datos SQLite en `puente_web/datos/usuarios.db` (creada sola; **excluida de
+  Git**). Contraseñas con `hashlib.scrypt`; tokens y códigos con **sha256**: si se copia
+  la base, no se puede suplantar a nadie.
+- `auth.py` acepta **dos** credenciales: el token maestro `DICTADO_WEB_TOKEN` (clientes de
+  escritorio y scripts; sin plan ni cupos) **o** el token de una cuenta. Nada de lo que ya
+  funcionaba deja de funcionar.
+- `planes.py` es la única autoridad. **Tres planes**: Gratis (motor del celular), Básico (30 min y 50
+  traducciones al día. Pro: **sin tope diario** (minutos y traducciones ilimitados;
+  `null` en el JSON), dictado en vivo y 3 dispositivos. Lo que acota el abuso no es el
+  cupo sino la cola: una transcripción y una traducción a la vez, y 60 s por petición.
+  El uso se cuenta por día (UTC) en la tabla `uso` y se responde **429** al agotarse.
+- **Correo** (opcional): `DICTADO_SMTP_*` sirve para Gmail con contraseña de aplicación
+  (587, starttls) o para un SMTP propio. Sin SMTP el registro funciona **sin verificar**
+  y el puente lo avisa al arrancar. Una cuenta creada **sin correo** nace verificada,
+  porque no hay nada que confirmar.
+- Herramientas de consola: `herramientas/crear_usuario.py`, `cambiar_plan.py` y
+  `listar_usuarios.py`.
 
 ## Comprobaciones
 

@@ -16,7 +16,7 @@ import zmq.asyncio
 
 from audio import trocear
 from protocolo import (
-    AUDIO, DICTADO_START, DICTADO_STOP, MODO_VIVO, PING, PONG,
+    AUDIO, DICTADO_START, DICTADO_STOP, MODO_VIVO, MODO_VOZ, PING, PONG,
     TEXTO, TEXTO_PARCIAL, FIN_DICTADO, ESTADO, AUTH_FAIL, crear_auth,
 )
 
@@ -42,12 +42,15 @@ class SesionDictado:
     """
 
     def __init__(self, cliente, vivo=False, al_parcial=None, timeout=120.0,
-                 modelo=""):
+                 modelo="", marcas=False):
         self._cliente = cliente
         self._vivo = vivo
         self._al_parcial = al_parcial
         self._timeout = timeout
         self._modelo = modelo or ""
+        # marcas: el TEXTO vuelve con los caracteres § ¬ ¶ para que el cliente
+        # sepa que hubo palabra clave y, si hay `¬`, qué acción ejecutar.
+        self._marcas = marcas
         self._socket = None
         self._parciales = []
         self._futuro = None
@@ -60,12 +63,20 @@ class SesionDictado:
         """Toma el turno, conecta si hace falta y pide empezar a acumular."""
         await self._cliente.entrar()
         self._socket = self._cliente.socket()
-        # El modelo de los parciales va en el propio arranque: `vivo:medium`.
-        orden = b""
+        # Banderas separadas por comas. El modelo de los parciales va en el
+        # propio arranque (`vivo:medium`). `voz` pide que el TEXTO vuelva con
+        # marcas: quien oyó la palabra clave fue el cliente (su escucha local o
+        # el propio usuario escribiendo), así que el servidor no la encuentra
+        # en el audio y la antepone él mismo.
+        banderas = []
+        if self._marcas:
+            banderas.append(MODO_VOZ)
         if self._vivo:
-            orden = MODO_VIVO
+            bandera = MODO_VIVO
             if self._modelo:
-                orden += b":" + self._modelo.encode("ascii", "ignore")
+                bandera += b":" + self._modelo.encode("ascii", "ignore")
+            banderas.append(bandera)
+        orden = b",".join(banderas)
         try:
             await self._socket.send_multipart([DICTADO_START, orden])
         except Exception:
@@ -152,7 +163,7 @@ class SesionDictado:
                     self._resolver(" ".join(self._parciales))
                 elif tipo == ESTADO:
                     self._fallar(ErrorDictado(payload.decode("utf-8", "replace")))
-                # PONG y COMANDO se ignoran: el puente no usa comandos de voz.
+                # PONG se ignora: al puente no le dice nada.
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -241,7 +252,7 @@ class ClienteDictado:
             raise ErrorDictado("No hay conexión con el servidor de dictado.")
         return self._socket
 
-    def sesion(self, vivo=False, al_parcial=None):
+    def sesion(self, vivo=False, al_parcial=None, marcas=False):
         """Crea una sesión de dictado (no la abre todavía)."""
         return SesionDictado(
             self,
@@ -249,11 +260,12 @@ class ClienteDictado:
             al_parcial=al_parcial,
             timeout=self.timeout,
             modelo=self.modelo_parciales if vivo else "",
+            marcas=marcas,
         )
 
-    async def transcribir(self, pcm, vivo=False):
+    async def transcribir(self, pcm, vivo=False, marcas=False):
         """Atajo para el caso simple: mandar todo el audio y esperar el texto."""
-        sesion = self.sesion(vivo=vivo)
+        sesion = self.sesion(vivo=vivo, marcas=marcas)
         await sesion.abrir()
         try:
             await sesion.enviar(pcm)

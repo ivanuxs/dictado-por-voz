@@ -5,3 +5,11 @@ websockets
 python-multipart
 pyzmq
 numpy
+
+# Traducción: Opus-MT con transformers en CPU (sin GPU ni CTranslate2).
+# torch se instala desde el índice de CPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
+sentencepiece
+sacremoses

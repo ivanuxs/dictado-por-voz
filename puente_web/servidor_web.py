@@ -19,8 +19,17 @@ from fastapi.responses import JSONResponse
 import audio
 import auth
 import config
+import correo
+import planes
+import rutas_cuentas
+import rutas_perfil
+import traduccion
+import usuarios
 from utils_logging import imprimir, rotar_logs_al_iniciar
 from zmq_cliente import ClienteDictado, ErrorDictado, ServidorSinRespuesta
+
+# El audio viaja en PCM 16 kHz mono de 2 bytes: así se pasa de bytes a segundos.
+BYTES_POR_SEGUNDO = audio.FRECUENCIA * audio.BYTES_MUESTRA
 
 dictado = ClienteDictado(
     config.DIRECCION_ZMQ,
@@ -32,14 +41,35 @@ dictado = ClienteDictado(
 # Peticiones REST que pueden esperar en cola a que se libere el modelo.
 cupo = asyncio.Semaphore(config.CONCURRENTES)
 
+# La traducción es de CPU y bloquea: de una en una, y sin dejar sin hilos a
+# Whisper. Se ejecuta en un hilo aparte (`asyncio.to_thread`), así que el bucle
+# de eventos sigue atendiendo dictados mientras traduce.
+cupo_traduccion = asyncio.Semaphore(1)
+
 
 @contextlib.asynccontextmanager
 async def ciclo(app):
     """Arranque y parada del puente."""
     if not config.TOKEN_WEB:
-        raise RuntimeError(
-            "Falta DICTADO_WEB_TOKEN: el puente no arranca sin token de acceso. "
-            "Ver puente_web/.env.example"
+        # Ya no es obligatorio: ahora la puerta de entrada son las cuentas.
+        # El token maestro se conserva para los clientes de escritorio y los
+        # scripts del dueño.
+        imprimir(
+            "[PUENTE] Aviso: sin DICTADO_WEB_TOKEN. El token maestro queda "
+            "apagado; solo entran las cuentas creadas desde la app."
+        )
+    usuarios.iniciar()
+    imprimir(
+        f"[PUENTE] Cuentas: registro "
+        f"{'abierto' if config.REGISTRO else 'cerrado'}, "
+        f"verificación de correo "
+        f"{'sí' if config.VERIFICAR_CORREO else 'no'} ({correo.descripcion()}), "
+        f"{usuarios.contar()} cuenta(s) en {config.BD}"
+    )
+    if config.VERIFICAR_CORREO and not correo.disponible():
+        imprimir(
+            "[PUENTE] Aviso: se pide verificar el correo pero no hay SMTP "
+            "configurado; nadie podrá confirmar su cuenta. Ver .env.example."
         )
     rotar_logs_al_iniciar()
     imprimir(
@@ -49,12 +79,38 @@ async def ciclo(app):
         f"[PUENTE] Límites: {config.MAX_SEGUNDOS} s de audio, {config.MAX_MB} MB, "
         f"{config.CONCURRENTES} peticiones en cola."
     )
+    if config.TRADUCCION:
+        instalados = traduccion.modelos_instalados()
+        if instalados:
+            imprimir(f"[PUENTE] Traducción: {', '.join(instalados)}")
+            # Se carga SOLO es→en (el par más usado) antes de aceptar
+            # peticiones: así la primera traducción no espera, y el arranque no
+            # se va a 40 s cargando todo (medido el 2026-11-01: 44 s con tres
+            # modelos). Los demás pares se cargan en la primera traducción que
+            # los pida, y a partir de ahí se quedan en memoria.
+            base = [m for m in ("es-en",) if m in instalados]
+            if base:
+                imprimir(f"[PUENTE] Precalentando: {', '.join(base)}")
+                await asyncio.to_thread(traduccion.calentar, base)
+        else:
+            imprimir(
+                "[PUENTE] Traducción sin modelos: ejecuta herramientas/preparar_modelos.py "
+                "(la ruta /api/v1/traducir responderá 422)."
+            )
+    else:
+        imprimir("[PUENTE] Traducción apagada (DICTADO_TRADUCCION=0).")
     yield
     await dictado.cerrar()
+    traduccion.liberar()
     imprimir("[PUENTE] Detenido.")
 
 
 app = FastAPI(title="Puente de dictado por voz", lifespan=ciclo)
+
+# Registrar, entrar, ver el plan y borrar la cuenta.
+app.include_router(rutas_cuentas.router)
+# Perfil del usuario: ajustes, diccionario y correcciones del dictado.
+app.include_router(rutas_perfil.router)
 
 
 @app.exception_handler(HTTPException)
@@ -78,11 +134,17 @@ async def salud():
 @app.get("/api/v1/estado")
 async def estado(request: Request):
     """Comprueba además que el servidor de dictado responde (PING/PONG)."""
-    await auth.verificar_peticion(request)
+    usuario = await auth.verificar_peticion(request)
     responde = await dictado.salud()
+    modelos = traduccion.modelos_instalados() if config.TRADUCCION else []
+    uso = usuarios.uso_hoy(usuario["id"]) if usuario.get("id") else None
     return {
         "status": "ok" if responde else "error",
         "servidor_dictado": "responde" if responde else "no responde",
+        "traduccion": "lista" if modelos else "sin modelos",
+        "modelos": modelos,
+        "usuario": usuario.get("email") or "token-maestro",
+        "plan": planes.cupos(usuario, uso),
     }
 
 
@@ -91,7 +153,10 @@ async def estado(request: Request):
 # ---------------------------------------------------------------------------
 @app.post("/api/v1/transcribe")
 async def transcribir(request: Request):
-    await auth.verificar_peticion(request)
+    usuario = await auth.verificar_peticion(request)
+    # El dictado con servidor es de pago: con el plan Gratis la app se queda
+    # con el motor del propio celular y nunca llega aquí.
+    planes.exigir(usuario, "servidor")
 
     declarado = request.headers.get("content-length")
     if declarado and declarado.isdigit() and int(declarado) > config.TAMANO_MAXIMO:
@@ -112,6 +177,18 @@ async def transcribir(request: Request):
     except audio.AudioInvalido as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
+    # Cupo del día: se comprueba ANTES de gastar GPU.
+    uso = usuarios.uso_hoy(usuario["id"]) if usuario.get("id") else {}
+    restantes = planes.minutos_restantes(usuario, uso)
+    if restantes is not None and medidas["duracion_s"] > restantes * 60 + 0.5:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Te quedan {restantes:.1f} minutos de dictado por servidor hoy. "
+                "Puedes seguir dictando con el motor del celular."
+            ),
+        )
+
     inicio = time.monotonic()
     try:
         await asyncio.wait_for(cupo.acquire(), config.ESPERA_MAXIMA)
@@ -121,8 +198,13 @@ async def transcribir(request: Request):
             detail="El servidor está ocupado con otros dictados; inténtalo en unos segundos.",
         ) from None
 
+    # `marcas` lo pide el teclado cuando trae intérprete: el TEXTO vuelve con
+    # § ¬ ¶ en vez de texto limpio. Sin la bandera (APK antiguos, scripts) el
+    # texto sigue llegando limpio, como siempre.
+    marcas = _verdad(request.query_params.get("marcas"))
+
     try:
-        resultado = await dictado.transcribir(pcm, vivo=False)
+        resultado = await dictado.transcribir(pcm, vivo=False, marcas=marcas)
     except ErrorDictado as e:
         imprimir(f"[PUENTE] Dictado fallido: {e}")
         if isinstance(e, ServidorSinRespuesta):
@@ -136,12 +218,96 @@ async def transcribir(request: Request):
         f"[PUENTE] REST {medidas['duracion_s']:.1f}s → «{resultado['texto']}» "
         f"({latencia} ms, RMS={medidas['rms']:.0f})"
     )
+    # Se apunta lo gastado DESPUÉS de transcribir: si falló, no se cobra cupo.
+    usuarios.sumar_uso(
+        usuario["id"], segundos=medidas["duracion_s"], transcripciones=1
+    )
+    quedan = planes.minutos_restantes(usuario, usuarios.uso_hoy(usuario["id"])) \
+        if usuario.get("id") else None
     return {
         "status": "ok",
         "transcript": resultado["texto"],
         "duracion_s": round(medidas["duracion_s"], 2),
         "rms": round(medidas["rms"]),
         "latencia_ms": latencia,
+        "minutos_restantes": None if quedan is None else round(quedan, 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+# REST: traducción de texto (Opus-MT en CPU, sin tocar el servidor de dictado)
+#
+# El teclado del celular manda lo escrito y recibe el texto traducido. El
+# origen puede ser "auto": se adivina con reglas simples (chino por caracteres,
+# portugués por ã/õ/ç, inglés por palabras frecuentes, si no español).
+# ---------------------------------------------------------------------------
+@app.post("/api/v1/traducir")
+async def traducir_texto(request: Request):
+    usuario = await auth.verificar_peticion(request)
+    planes.exigir(usuario, "traduccion")
+    if not config.TRADUCCION:
+        raise HTTPException(
+            status_code=503, detail="La traducción está apagada en el puente."
+        )
+
+    try:
+        datos = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Se esperaba un JSON con «texto» y «destino».",
+        ) from None
+    if not isinstance(datos, dict):
+        raise HTTPException(
+            status_code=400, detail="Se esperaba un objeto JSON con «texto» y «destino»."
+        )
+
+    texto = str(datos.get("texto") or "")
+    destino = str(datos.get("destino") or "en")
+    origen = str(datos.get("origen") or "auto")
+
+    # Cupo de traducciones del plan (una traducción = un toque del botón 🌐).
+    uso = usuarios.uso_hoy(usuario["id"]) if usuario.get("id") else {}
+    quedan = planes.traducciones_restantes(usuario, uso)
+    if quedan is not None and quedan <= 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Llegaste al tope de traducciones de hoy. Vuelve mañana o mejora el plan.",
+        )
+
+    try:
+        await asyncio.wait_for(cupo_traduccion.acquire(), config.ESPERA_MAXIMA)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="Hay otra traducción en marcha; prueba en un momento.",
+        ) from None
+
+    inicio = time.monotonic()
+    try:
+        traduccion_texto, de, a = await asyncio.to_thread(
+            traduccion.traducir, texto, destino, origen
+        )
+    except traduccion.ErrorTraduccion as e:
+        imprimir(f"[PUENTE] Traducción fallida: {e}")
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    finally:
+        cupo_traduccion.release()
+
+    latencia = int((time.monotonic() - inicio) * 1000)
+    imprimir(
+        f"[PUENTE] Traducción {de}→{a} ({len(texto)} caracteres): "
+        f"«{texto[:40]}» → «{traduccion_texto[:40]}» ({latencia} ms)"
+    )
+    usuarios.sumar_uso(
+        usuario["id"], traducciones=1, caracteres=len(texto)
+    )
+    return {
+        "status": "ok",
+        "texto": traduccion_texto,
+        "origen": de,
+        "destino": a,
+        "ms": latencia,
     }
 
 
@@ -152,10 +318,24 @@ async def transcribir(request: Request):
 async def ws_transcribir(ws: WebSocket):
     await ws.accept()
     try:
-        auth.verificar_cabecera(ws.headers.get("authorization"))
+        usuario = auth.verificar_cabecera(ws.headers.get("authorization"))
+        # El dictado por servidor es de pago (y el modo vivo, de Pro).
+        planes.exigir(usuario, "servidor")
+        uso = usuarios.uso_hoy(usuario["id"]) if usuario.get("id") else {}
+        restantes = planes.minutos_restantes(usuario, uso)
+        if restantes is not None and restantes <= 0:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Se acabó tu cupo de dictado por servidor de hoy. "
+                    "Puedes seguir dictando con el motor del celular."
+                ),
+            )
     except HTTPException as e:
-        await _enviar_json(ws, {"tipo": "error", "mensaje": e.detail})
-        await ws.close(code=4401)
+        await _enviar_json(
+            ws, {"tipo": "error", "mensaje": e.detail, "codigo": e.status_code}
+        )
+        await ws.close(code=4401 if e.status_code == 401 else 4403)
         return
 
     origen = ws.client.host if ws.client else "?"
@@ -163,6 +343,8 @@ async def ws_transcribir(ws: WebSocket):
     sesion = None
     pendiente = bytearray()
     inicio = time.monotonic()
+    # Bytes de audio recibidos: de aquí sale lo que se descuenta del cupo.
+    bytes_recibidos = 0
 
     try:
         while True:
@@ -191,6 +373,7 @@ async def ws_transcribir(ws: WebSocket):
                     vivo = str(orden.get("modo", "normal")).lower() == "vivo"
                     sesion = dictado.sesion(
                         vivo=vivo,
+                        marcas=_verdad(orden.get("marcas")),
                         al_parcial=lambda t: _enviar_json(ws, {"tipo": "parcial", "texto": t}),
                     )
                     try:
@@ -251,6 +434,22 @@ async def ws_transcribir(ws: WebSocket):
             elif datos:
                 if sesion is None:
                     continue  # audio sin haber pedido "inicio": se ignora
+                bytes_recibidos += len(datos)
+                if bytes_recibidos > config.MAX_SEGUNDOS * BYTES_POR_SEGUNDO:
+                    await _enviar_json(
+                        ws,
+                        {
+                            "tipo": "error",
+                            "mensaje": (
+                                f"El dictado supera el tope de {config.MAX_SEGUNDOS} s."
+                            ),
+                        },
+                    )
+                    with contextlib.suppress(Exception):
+                        await sesion.cerrar()
+                    sesion = None
+                    pendiente.clear()
+                    continue
                 pendiente.extend(datos)
                 while len(pendiente) >= audio.BYTES_TROZO:
                     await sesion.enviar(bytes(pendiente[: audio.BYTES_TROZO]))
@@ -264,6 +463,12 @@ async def ws_transcribir(ws: WebSocket):
         if sesion is not None:
             with contextlib.suppress(Exception):
                 await sesion.cerrar()
+        if bytes_recibidos:
+            usuarios.sumar_uso(
+                usuario["id"],
+                segundos=bytes_recibidos / BYTES_POR_SEGUNDO,
+                transcripciones=1,
+            )
         imprimir("[PUENTE] WebSocket cerrado.")
 
 
@@ -277,6 +482,15 @@ def _leer_orden(texto):
     except json.JSONDecodeError:
         return None
     return orden if isinstance(orden, dict) else None
+
+
+def _verdad(valor):
+    """Interpreta una bandera que llega por REST o por el WebSocket."""
+    if isinstance(valor, bool):
+        return valor
+    return str(valor or "").strip().lower() in (
+        "1", "true", "si", "sí", "on", "yes",
+    )
 
 
 async def _enviar_json(ws, objeto):
