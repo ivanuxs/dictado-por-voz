@@ -35,6 +35,9 @@ BYTES_MUESTRA = 2
 # Un poco por debajo del tope del puente (60 s) para dejar margen.
 SEGUNDOS_MAXIMOS = 55
 BYTES_MAXIMOS = SEGUNDOS_MAXIMOS * FRECUENCIA * BYTES_MUESTRA
+# **No hay tope total**: un dictado puede durar lo que quiera. El cliente va
+# mandando trozos de 55 s mientras se habla (ver `extraer_trozo`), así que la
+# memoria no crece con la duración del dictado.
 
 
 def _base(config):
@@ -89,6 +92,107 @@ def a_wav(pcm):
         wav.setframerate(FRECUENCIA)
         wav.writeframes(pcm)
     return buffer.getvalue()
+
+
+def transcribir_largo(config, pcm, espera=120, progreso=None):
+    """Transcribe un dictado de cualquier duración partiéndolo en trozos.
+
+    El puente admite 60 s por petición (`DICTADO_MAX_SEGUNDOS`) y 5 MB, así que
+    un dictado más largo se envía en trozos de `SEGUNDOS_MAXIMOS` y los textos se
+    unen. Los cortes buscan el **silencio** más cercano al límite para no partir
+    palabras por la mitad.
+
+    `progreso(trozo, total)` se llama antes de cada envío (para el registro).
+    Devuelve `(texto, error)`; si falla un trozo, se conserva lo ya transcrito.
+    """
+    if not pcm:
+        return "", "no llegó audio al dictado"
+
+    partes = _partir(pcm)
+    total = len(partes)
+    textos = []
+    for numero, parte in enumerate(partes, start=1):
+        if progreso is not None:
+            try:
+                progreso(numero, total)
+            except Exception:
+                pass
+        texto, error = transcribir(config, parte, espera)
+        if error:
+            if textos:
+                # Se queda con lo transcrito y se avisa de que falta el resto.
+                return " ".join(textos).strip(), error
+            return "", error
+        if texto:
+            textos.append(texto)
+    return " ".join(textos).strip(), ""
+
+
+def extraer_trozo(pcm):
+    """Saca un trozo listo para enviar y devuelve `(trozo, resto)`.
+
+    Se usa para dictar sin límite: mientras la persona habla, el cliente va
+    cerrando trozos de ~55 s (cortando en el silencio más cercano) y los manda;
+    el resto se queda acumulándose. Así la memoria no crece con la duración del
+    dictado.
+    """
+    import numpy as np
+
+    if not pcm:
+        return b"", b""
+    fin = min(len(pcm), BYTES_MAXIMOS)
+    if len(pcm) > BYTES_MAXIMOS:
+        fin = _fin_por_silencio(pcm, 0, fin, np)
+    return pcm[:fin], pcm[fin:]
+
+
+def _partir(pcm):
+    """Parte el PCM en trozos de `SEGUNDOS_MAXIMOS`, cortando por silencios."""
+    import numpy as np
+
+    partes = []
+    inicio = 0
+    total_bytes = len(pcm)
+    while inicio < total_bytes:
+        fin = min(inicio + BYTES_MAXIMOS, total_bytes)
+        if fin < total_bytes:
+            fin = _fin_por_silencio(pcm, inicio, fin, np)
+        parte = pcm[inicio:fin]
+        if parte:
+            partes.append(parte)
+        inicio = fin
+    return partes
+
+
+def _fin_por_silencio(pcm, inicio, fin, np):
+    """Devuelve un final de trozo cerca de `fin`, en el hueco más silencioso.
+
+    Se mira una ventana de 2 s antes del límite, en bloques de 50 ms, y se corta
+    en el más silencioso. Si ese punto cae en la primera mitad del trozo (lo que
+    dejaría un trozo diminuto), se corta en `fin`.
+    """
+    try:
+        total_muestras = (fin - inicio) // 2
+        if total_muestras < 16000:  # menos de 1 s: no merece la pena
+            return fin
+        ventana = min(32000, total_muestras)  # últimos 2 s
+        inicio_ventana = total_muestras - ventana
+        datos = np.frombuffer(pcm[inicio:fin], dtype="<i2")[inicio_ventana:]
+        bloque = 800  # 50 ms a 16 kHz
+        usables = datos.size - datos.size % bloque
+        if usables < bloque:
+            return fin
+        energias = (
+            np.abs(datos[:usables].reshape(-1, bloque).astype(np.int32))
+            .mean(axis=1)
+        )
+        indice = int(energias.argmin())
+        corte_muestras = inicio_ventana + indice * bloque + bloque // 2
+        if corte_muestras < total_muestras // 2:
+            return fin
+        return inicio + corte_muestras * 2
+    except Exception:
+        return fin
 
 
 def _detalle(cuerpo):

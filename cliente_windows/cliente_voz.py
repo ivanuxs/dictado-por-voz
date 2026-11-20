@@ -970,8 +970,14 @@ class ClienteVoz:
         self._token_transporte = sesion.token()
         self._auth_avisada = False
         self._pcm_puente = bytearray()
-        self._puente_ocupado = False
-        self._aviso_largo = False
+        # Sin tope de duración: el audio se parte en trozos de ~55 s que se
+        # envían mientras se sigue hablando.
+        self._cola_trozos = queue.Queue()
+        self._hilo_trozos = None
+        self._textos_puente = []
+        self._error_puente = ""
+        self._final_puente = False
+        self._trozo_numero = 0
 
     def _mtime_json(self):
         """Fecha de modificación del JSON (0.0 si no se puede leer)."""
@@ -1694,45 +1700,86 @@ class ClienteVoz:
             self._pcm_puente = bytearray()
             imprimir(f"[TRANSPORTE] Cambiado a {nuevo}.")
 
+    def _reiniciar_puente(self):
+        """Deja el envío por trozos listo para un dictado nuevo."""
+        self._pcm_puente = bytearray()
+        self._textos_puente = []
+        self._error_puente = ""
+        self._final_puente = False
+        self._trozo_numero = 0
+
     def _acumular_puente(self, chunk):
-        """Guarda el trozo para mandarlo al puente al cerrar el dictado."""
+        """Guarda el trozo y va cerrando trozos de ~55 s mientras se dicta.
+
+        Así un dictado puede durar **lo que haga falta**: la memoria no crece con
+        la duración y el primer trozo ya se transcribe mientras la persona sigue
+        hablando (2026-11-20).
+        """
         self._pcm_puente.extend(chunk.tobytes())
-        if (
-            len(self._pcm_puente) > puente_dictado.BYTES_MAXIMOS
-            and not self._aviso_largo
-        ):
-            self._aviso_largo = True
-            imprimir(
-                "[PUENTE] ⚠ El dictado pasa de "
-                f"{puente_dictado.SEGUNDOS_MAXIMOS} s: se envía solo hasta ahí."
+        while len(self._pcm_puente) >= puente_dictado.BYTES_MAXIMOS:
+            self._cerrar_trozo_puente()
+
+    def _cerrar_trozo_puente(self, final=False):
+        """Saca del búfer un trozo listo para enviar y lo encola."""
+        if not self._pcm_puente:
+            return
+        if not final and len(self._pcm_puente) < puente_dictado.BYTES_MAXIMOS:
+            return
+        trozo, resto = puente_dictado.extraer_trozo(bytes(self._pcm_puente))
+        self._pcm_puente = bytearray(resto)
+        if not trozo:
+            return
+        self._trozo_numero += 1
+        segundos = len(trozo) / (puente_dictado.FRECUENCIA * 2)
+        imprimir(
+            f"[PUENTE] Trozo {self._trozo_numero}: {segundos:.1f} s de audio."
+        )
+        self._cola_trozos.put(trozo)
+        self._asegurar_hilo_trozos()
+
+    def _asegurar_hilo_trozos(self):
+        """Arranca la hebra que envía los trozos, si no está viva."""
+        if self._hilo_trozos is not None and self._hilo_trozos.is_alive():
+            return
+        self._hilo_trozos = threading.Thread(
+            target=self._bucle_trozos, daemon=True, name="puente"
+        )
+        self._hilo_trozos.start()
+
+    def _bucle_trozos(self):
+        """Envía los trozos en orden y entrega el texto al cerrar el dictado."""
+        while True:
+            try:
+                trozo = self._cola_trozos.get(timeout=0.3)
+            except queue.Empty:
+                if self._final_puente and self._cola_trozos.empty():
+                    break
+                continue
+            texto, error = puente_dictado.transcribir(
+                self._config_cuenta, trozo
             )
+            if error:
+                if not self._error_puente:
+                    self._error_puente = error
+                    imprimir(f"[PUENTE] {error}")
+            elif texto:
+                self._textos_puente.append(texto)
+        texto_final = " ".join(t for t in self._textos_puente if t).strip()
+        error_final = self._error_puente
+        if not texto_final and not error_final:
+            error_final = "el puente no devolvió texto"
+        self._hilo_trozos = None
+        self._cola_eventos.put(("puente_texto", texto_final, error_final))
 
     def _lanzar_transcripcion_puente(self):
-        """Manda lo acumulado al puente en una hebra (no bloquea el bucle)."""
-        pcm = bytes(self._pcm_puente)
-        self._pcm_puente = bytearray()
-        self._aviso_largo = False
-        if self._puente_ocupado:
-            imprimir("[PUENTE] Ya hay un dictado en curso; este se descarta.")
-            return
-        if not pcm:
+        """Cierra el último trozo y marca el final: el resto lo hace la hebra."""
+        self._cerrar_trozo_puente(final=True)
+        self._final_puente = True
+        if self._hilo_trozos is None and self._cola_trozos.empty():
             imprimir("[PUENTE] No hay audio que enviar.")
-            return
-        self._puente_ocupado = True
-        segundos = len(pcm) / (puente_dictado.FRECUENCIA * 2)
-        imprimir(f"[PUENTE] Enviando {segundos:.1f} s de audio por HTTPS...")
-        threading.Thread(
-            target=self._transcribir_puente, args=(pcm,), daemon=True
-        ).start()
-
-    def _transcribir_puente(self, pcm):
-        """Hebra: POST al puente y el resultado a la cola de eventos."""
-        try:
-            texto, error = puente_dictado.transcribir(self._config_cuenta, pcm)
-        except Exception as e:  # nunca puede tumbar la hebra
-            texto, error = "", f"fallo al dictar por el puente: {e}"
-        self._puente_ocupado = False
-        self._cola_eventos.put(("puente_texto", texto, error))
+            self._cola_eventos.put(
+                ("puente_texto", "", "no llegó audio al dictado")
+            )
 
     def _enviar_audio(self):
         """Envía chunks de audio acumulados al servidor."""
@@ -1777,9 +1824,11 @@ class ClienteVoz:
                         imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
                 elif evento == "start":
                     if self._transporte == "puente":
-                        # Se acumula el audio y se manda al cerrar.
-                        self._pcm_puente = bytearray()
-                        self._aviso_largo = False
+                        # Dicado por trozos: se empieza de cero.
+                        self._reiniciar_puente()
+                        self._pcm_puente = bytearray(b"".join(self._buffer_voz))
+                        self._buffer_voz = []
+                        self._dictado_enviado = True
                         imprimir("[CLIENTE] Dictado por HTTPS (puente).")
                     elif self._dictado_voz:
                         # La palabra clave la oyó el motor local: no viaja en

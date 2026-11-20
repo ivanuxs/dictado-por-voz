@@ -303,9 +303,14 @@ de Ubuntu y Windows ahora pueden mandar el audio **por el mismo puente que el ce
 - ⚠️ **Acumular solo durante el dictado**: el micrófono se captura siempre (para la palabra
   clave), así que acumular sin mirar `self._grabando` llenaba el tope en un minuto de uso y
   avisaba «el dictado pasa de 55 s» sin haber dictado nada (visto al probarlo).
-- Topes: el puente admite 60 s y 5 MB por petición; aquí se corta a
-  `puente_dictado.SEGUNDOS_MAXIMOS` (55 s) y se avisa. **No hay dictado en vivo** (parciales)
-  por el puente: el texto llega al final.
+- Topes: el puente admite 60 s y 5 MB por petición. **El dictado no tiene tope de duración**:  
+  mientras se habla, el cliente va cerrando trozos de ~55 s (`puente_dictado.extraer_trozo`,  
+  cortando en el silencio más cercano para no partir palabras) y los envía en orden desde una  
+  hebra (`_cerrar_trozo_puente` / `_bucle_trozos`), uniendo los textos al cerrar el dictado. Así  
+  la memoria no crece con la duración y el primer trozo ya se transcribe mientras se sigue  
+  hablando. Antes se recortaba en silencio a 55 s (perdía el final) y luego se puso un tope de  
+  10 min, que también se quitó (2026-11-20). **No hay dictado en vivo** (parciales) por el  
+  puente: el texto llega al final.
 - ZMQ sigue existiendo (red local, pruebas del servidor y respaldo si el puente no responde).
 
 ### Cliente Android (`cliente_android/`)
