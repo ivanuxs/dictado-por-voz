@@ -135,6 +135,16 @@ def _ruta_icono(estado):
     return ruta
 
 
+def _nombre_icono(estado):
+    """Nombre de tema del icono de ese estado (sin ruta ni extensión).
+
+    Es lo que entiende gnome-shell: el archivo se busca dentro de
+    `IconThemePath` (la carpeta `CACHE`). Ver `iniciar()`.
+    """
+    _ruta_icono(estado)  # se asegura de que el PNG existe
+    return f"icono-{estado}"
+
+
 def _estado_guardado():
     """Lo que el cliente dejó escrito en estado.json (vacío si no hay)."""
     try:
@@ -206,9 +216,14 @@ class Bandeja:
 
         self._indicador = AyatanaAppIndicator3.Indicator.new(
             "dictado-voz",
-            _ruta_icono(self._estado),
+            _nombre_icono(self._estado),
             AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS,
         )
+        # `IconName` tiene que ser un **nombre de tema**, no una ruta absoluta.
+        # Con la ruta, el indicador se publicaba como Active pero gnome-shell no
+        # dibujaba nada (`IconThemePath` vacío): el icono no aparecía en la barra
+        # (2026-11-19). Con la carpeta declarada, resuelve `icono-<estado>`.
+        self._indicador.set_icon_theme_path(CACHE)
         self._indicador.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
         self._indicador.set_title("SkipKey")
         self._indicador.set_menu(menu)
@@ -321,7 +336,7 @@ class Bandeja:
         if estado != self._estado:
             self._estado = estado
             try:
-                self._indicador.set_icon_full(_ruta_icono(estado), "SkipKey")
+                self._indicador.set_icon_full(_nombre_icono(estado), "SkipKey")
             except Exception:
                 pass
 

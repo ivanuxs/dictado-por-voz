@@ -16,6 +16,46 @@ import traceback
 import webbrowser
 from urllib.parse import quote_plus
 
+
+def _bases_programa():
+    """Carpetas donde buscar los archivos que acompañan al programa."""
+    bases = []
+    ejecutable = getattr(sys, "executable", "") or ""
+    if ejecutable:
+        bases.append(os.path.dirname(os.path.realpath(ejecutable)))
+    temporal = getattr(sys, "_MEIPASS", "") or ""
+    if temporal:
+        bases.append(temporal)
+    bases.append(os.path.dirname(os.path.abspath(__file__)))
+    return bases
+
+
+def leer_version():
+    """Versión del cliente, la que dejó escrita la compilación.
+
+    `version.txt` lo copia el instalador junto al `.exe`. Si no está, es un
+    cliente ejecutado desde el código fuente.
+    """
+    for base in _bases_programa():
+        ruta = os.path.join(base, "version.txt")
+        try:
+            with open(ruta, encoding="utf-8") as archivo:
+                version = archivo.read().strip()
+        except OSError:
+            continue
+        if version:
+            return version
+    return "desarrollo"
+
+
+# `--version` antes de las importaciones pesadas: tiene que responder rápido y
+# sin depender de pantalla, audio ni red.
+if __name__ == "__main__" and any(
+    a in sys.argv[1:] for a in ("--version", "--versión", "-V")
+):
+    print(f"SkipKey {leer_version()}")
+    raise SystemExit(0)
+
 import numpy as np
 import pyautogui
 import pyperclip
@@ -928,6 +968,7 @@ class ClienteVoz:
         # "zmq" (solo la red del servidor). Ver `_elegir_transporte`.
         self._transporte = "zmq"
         self._token_transporte = sesion.token()
+        self._auth_avisada = False
         self._pcm_puente = bytearray()
         self._puente_ocupado = False
         self._aviso_largo = False
@@ -1332,6 +1373,18 @@ class ClienteVoz:
                 f"[SERVIDOR] ⚠ El servidor rechazó la autenticación: {motivo}. "
                 "Sin una cuenta válida no se transcribe nada."
             )
+            # Un solo cuadro por sesión (si no, cada 60 s salía otra ventana):
+            # pasa cuando la cuenta se abre en otro equipo y el puente libera
+            # este dispositivo por el límite del plan.
+            if not self._auth_avisada:
+                self._auth_avisada = True
+                _avisar_usuario(
+                    "Sesión no reconocida",
+                    "El servidor no acepta la sesión de este equipo: suele pasar "
+                    "cuando la cuenta se abre en más aparatos de los que permite "
+                    "el plan. Vuelve a entrar en Configuración → Cuenta y el "
+                    "dictado se reanuda.",
+                )
             return
 
         if tipo == TEXTO:
@@ -2945,6 +2998,11 @@ if __name__ == "__main__":
         "--probar-escucha",
         "--probar-bandeja",
         "--configuracion",
+        # `--indicador` es el proceso hijo que dibuja el recuadro «REC»: también
+        # tiene que saltarse el cerrojo. Sin esto el hijo creía que había otra
+        # copia, mostraba «El cliente ya está en ejecución» y se cerraba, así
+        # que el símbolo de grabación **nunca** aparecía (2026-11-19).
+        "--indicador",
     )
     if not any(modo in args for modo in _MODOS_AYUDA):
         # El cerrojo va ANTES de rotar: una segunda copia no debe vaciar el
@@ -2962,7 +3020,7 @@ if __name__ == "__main__":
             )
             sys.exit(0)
         rotar_logs_al_iniciar()
-    imprimir(f"=== CLIENTE DE SKIPKEY === ({' '.join(args) or 'sin argumentos'})")
+    imprimir(f"=== CLIENTE DE SKIPKEY {leer_version()} === ({' '.join(args) or 'sin argumentos'})")
 
     # Modos de instalación del cliente dedicado (Windows)
     if "--instalar" in args:

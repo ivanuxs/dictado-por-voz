@@ -58,6 +58,9 @@ clave_proxy_compilada.py
 # Clave del proxy en texto, para que viaje con la carpeta a la PC Windows
 # (la lee construir_exe_windows.bat y también el cliente en ejecución).
 clave_proxy.txt
+# Versión del cliente: la escribe el empaquetado (Docker en Ubuntu, 
+# crear_instalador.bat en Windows) y la lee el propio cliente.
+version.txt
 
 # ─────────────────────────────────────────────────────────────
 # Compilación del cliente Android

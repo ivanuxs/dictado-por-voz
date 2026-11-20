@@ -7,6 +7,17 @@ Salida: dist\\ClienteVoz.exe
 """
 
 from PyInstaller.utils.hooks import collect_all
+import os
+
+# --- Archivos de datos propios ---
+# `comandos_windows.json` se incluye **solo si existe**: el cliente lo crea al
+# primer arranque si falta, y que la compilación dependa de él rompía el build
+# en una carpeta recién copiada (2026-11-19: «Unable to find
+# comandos_windows.json»).
+_datos_propios = []
+for _nombre in ("comandos_windows.json", "version.txt"):
+    if os.path.exists(os.path.join(SPECPATH, _nombre)):
+        _datos_propios.append((_nombre, "."))
 
 # --- Paquetes con datos/binarios/hidden-imports especiales (Windows) ---
 # `faster_whisper` trae ctranslate2 (DLL nativas), tokenizers y av: hay que
@@ -28,9 +39,7 @@ a = Analysis(
     ["cliente_voz.py"],
     pathex=[SPECPATH],
     binaries=_binarios_extra,
-    datas=[
-        ("comandos_windows.json", "."),
-    ] + _datos_extra,
+    datas=_datos_propios + _datos_extra,
     hiddenimports=[
         "pyautogui",
         "pyperclip",

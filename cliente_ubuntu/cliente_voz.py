@@ -16,17 +16,57 @@ import time
 import webbrowser
 from urllib.parse import quote_plus
 
+
+def _bases_programa():
+    """Carpetas donde buscar los archivos que acompañan al programa.
+
+    En el paquete el binario vive en otro sitio (`/opt/skipkey` o el montaje
+    del AppImage) y `sys.executable` puede no existir (Nuitka): se miran las
+    dos posibilidades, la del ejecutable y la del módulo.
+    """
+    bases = []
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        for candidato in (sys.argv[0], sys.executable):
+            if candidato:
+                bases.append(os.path.dirname(os.path.realpath(candidato)))
+    bases.append(os.path.dirname(os.path.abspath(__file__)))
+    return bases
+
+
+def leer_version():
+    """Versión del cliente, la que dejó escrita la compilación.
+
+    `version.txt` viaja junto al programa (lo escribe el empaquetado) y también
+    lo copia el instalador de Windows. Si no está, es un cliente en modo fuente.
+    """
+    for base in _bases_programa():
+        ruta = os.path.join(base, "version.txt")
+        try:
+            with open(ruta, encoding="utf-8") as archivo:
+                version = archivo.read().strip()
+        except OSError:
+            continue
+        if version:
+            return version
+    return "desarrollo"
+
+
+# `--version` se atiende antes de importar pyautogui/zmq, por el mismo motivo que
+# `--ayuda`: sin pantalla, esos imports revientan. La versión tiene que poder
+# consultarse en cualquier sitio, incluso desde SSH.
+if __name__ == "__main__" and any(
+    a in sys.argv[1:] for a in ("--version", "--versión", "-V")
+):
+    print(f"SkipKey {leer_version()}")
+    raise SystemExit(0)
+
 # `--ayuda` se atiende ANTES de importar pyautogui/zmq: esas bibliotecas
 # necesitan pantalla y, sin ella (SSH, servidor), el import revienta con
 # `KeyError: 'DISPLAY'`. El manual tiene que poder leerse en cualquier sitio.
 if __name__ == "__main__" and any(
     a in sys.argv[1:] for a in ("--ayuda", "--help", "-h")
 ):
-    _bases = []
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
-        _bases.append(os.path.dirname(sys.executable))
-    _bases.append(os.path.dirname(os.path.abspath(__file__)))
-    for _base in _bases:
+    for _base in _bases_programa():
         _ruta = os.path.join(_base, "INSTALAR_EN_OTRA_PC.md")
         if os.path.exists(_ruta):
             with open(_ruta, encoding="utf-8") as _archivo:
@@ -1193,6 +1233,7 @@ class ClienteVoz:
         # en internet (el 5555 no lo está).
         self._transporte = "zmq"
         self._token_transporte = sesion.token()  # con el que se eligió
+        self._auth_avisada = False          # ya se avisó de un AUTH_FAIL
         self._pcm_puente = bytearray()      # audio acumulado para el puente
         self._puente_ocupado = False        # hay un POST en curso
         self._aviso_largo = False           # ya se avisó de que se recorta
@@ -2395,6 +2436,18 @@ class ClienteVoz:
                 f"[SERVIDOR] ⚠ El servidor rechazó la autenticación: {motivo}. "
                 "Sin una cuenta válida no se transcribe nada."
             )
+            # Un solo diálogo por sesión (si no, cada 60 s salía otra ventana):
+            # pasa cuando la cuenta se abre en otro equipo y el puente libera
+            # este dispositivo por el límite del plan.
+            if not self._auth_avisada:
+                self._auth_avisada = True
+                _avisar_usuario(
+                    "Sesión no reconocida",
+                    "El servidor no acepta la sesión de este equipo: suele pasar "
+                    "cuando la cuenta se abre en más aparatos de los que permite "
+                    "el plan. Vuelve a entrar en Configuración → Cuenta y el "
+                    "dictado se reanuda.",
+                )
             return
 
         if tipo == TEXTO:
@@ -3170,7 +3223,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
     rotar_logs_al_iniciar()
-    imprimir("=== CLIENTE DE SKIPKEY ===")
+    imprimir(f"=== CLIENTE DE SKIPKEY {leer_version()} ===")
 
     # Sin sesión gráfica no hay ni icono ni teclado ni portapapeles: mejor
     # decirlo que reventar con un KeyError de pyautogui.

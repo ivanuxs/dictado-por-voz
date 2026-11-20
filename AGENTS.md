@@ -530,6 +530,13 @@ voz, dictar ahora, **Configuración…**, ver el registro y salir. Es el equival
 - Colores: gris (escucha apagada), verde (esperando la palabra clave), ámbar (comandos en
   pausa), rojo (grabando).
 - Se apaga con `"bandeja": false` en `comandos.json`.
+- ⚠️ **El icono se publica como nombre de tema, no como ruta** (2026-11-19). Con
+  `Indicator.new(..., _ruta_icono(estado), ...)` el indicador aparecía en el bus como
+  `Active` pero **gnome-shell no dibujaba nada**: llegaba un `IconName` con ruta absoluta y
+  `IconThemePath` vacío, y no hay icono que resolver. Ahora se pasa `icono-<estado>` y
+  `set_icon_theme_path(CACHE)`; se comprueba con
+  `gdbus call --session --dest org.kde.StatusNotifierWatcher … RegisteredStatusNotifierItems`
+  y leyendo las propiedades del item (`IconName`, `IconThemePath`, `Status`).
 
 ⚠️ **GTK3 estaba roto en este equipo (2026-11-04)** y sin arreglarlo no hay icono posible:
 `gsettings-desktop-schemas` 50.0 movió `antialiasing`, `hinting` y `rgba-order` a un esquema
@@ -698,6 +705,10 @@ una orden cuando el cliente se lo pide.
   micrófono y la bandeja). Y `rotar_logs_al_iniciar()` se llama **solo** al arrancar el cliente:
   antes `--configuracion` y `--probar-*` son procesos del mismo `.exe` y **vaciaban el registro**
   del cliente en marcha en cada uso.
+- ⚠️ **Todo proceso hijo tiene que estar en `_MODOS_AYUDA`** (Windows): `--configuracion`,
+  `--probar-*` y **`--indicador`**. Si falta, el mutex `SkipKeyClienteVoz` lo trata como una
+  segunda copia, le sale el cuadro «El cliente ya está en ejecución» y se cierra. Así estuvo el
+  recuadro «REC» sin aparecer nunca en Windows (2026-11-19), aunque el dictado sí funcionaba.
 
 #### Instalador de Windows (`cliente_windows/instalador/`)
 

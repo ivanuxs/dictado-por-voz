@@ -24,6 +24,9 @@ echo "== Clave del proxy para el binario =="
 # Se incrusta como módulo, igual que en el APK: el usuario final no la ve ni la
 # escribe. Se genera SIEMPRE (aunque esté vacía) para que el import exista.
 printf 'CLAVE = "%s"\n' "${DICTADO_PUENTE_CLAVE:-}" > "$TRABAJO/clave_proxy_compilada.py"
+# La versión del paquete, para que el propio cliente pueda decirla
+# (`--version`, registro de arranque y ventana de configuración).
+printf '%s\n' "$VERSION" > "$TRABAJO/version.txt"
 if [ -n "${DICTADO_PUENTE_CLAVE:-}" ]; then
     echo "   incrustada (${#DICTADO_PUENTE_CLAVE} caracteres)"
 else
@@ -108,6 +111,7 @@ echo "== Compilando con Nuitka (esto tarda 30-60 min la primera vez) =="
     --noinclude-dlls=libharfbuzz* \
     --include-data-file=comandos.json=comandos.json \
     --include-data-file=INSTALAR_EN_OTRA_PC.md=INSTALAR_EN_OTRA_PC.md \
+    --include-data-file=version.txt=version.txt \
     --report=/salida/informe-nuitka.xml \
     --output-dir="$SALIDA_NUITKA" \
     --output-filename=skipkey \

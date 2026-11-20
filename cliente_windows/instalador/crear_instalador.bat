@@ -13,6 +13,10 @@ REM el instalador empaquetaria el cliente viejo, sin los cambios del dia.
 set "RECOMPILAR=0"
 echo %* | findstr /i /c:"--recompilar" >nul && set "RECOMPILAR=1"
 
+REM La versión viaja con el cliente: es lo que responde `ClienteVoz.exe
+REM --version` y lo que queda en el registro al arrancar.
+> "..\version.txt" echo %VERSION%
+
 REM El registro guarda los pasos y el mensaje de ISCC. La compilacion del
 REM cliente NO se redirige: si se oculta su salida, la ventana parece colgada
 REM durante los muchos minutos que tarda (visto el 2026-11-19).

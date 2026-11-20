@@ -61,6 +61,9 @@ Source: "{#CarpetaCliente}\comandos_windows.json"; DestDir: "{app}"; Flags: only
 ; Respaldo de la clave y la guía (opcionales).
 Source: "{#CarpetaCliente}\clave_proxy.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#CarpetaCliente}\README_windows.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Versión del cliente (`ClienteVoz.exe --version` y el registro de arranque).
+; La escribe crear_instalador.bat antes de llamar a Inno Setup.
+Source: "{#CarpetaCliente}\version.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MiApp}"; Filename: "{app}\{#MiExe}"
