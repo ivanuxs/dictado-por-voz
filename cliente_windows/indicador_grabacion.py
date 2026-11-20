@@ -104,5 +104,20 @@ class _IndicadorNulo:
         pass
 
 
+def main():
+    """Muestra la ventana hasta que se cierre (bandera `--indicador`)."""
+    try:
+        VentanaGrabacion().ejecutar()
+    except Exception as e:
+        try:
+            from utils_logging import imprimir
+
+            imprimir(f"[INDICADOR] No se pudo mostrar la ventana: {e}")
+        except Exception:
+            pass
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    VentanaGrabacion().ejecutar()
+    raise SystemExit(main())

@@ -13,6 +13,7 @@ El objeto que se le pasa (`cliente`) tiene que ofrecer:
     cliente.alternar_escucha_local()   enciende/apaga la escucha de la clave
     cliente.alternar_comandos()        pausa/reanuda la ejecución de comandos
     cliente.alternar_dictado()         empieza o termina un dictado
+    cliente.reiniciar_escucha_teclado() vuelve a enganchar el teclado global
     cliente.abrir_registro()           abre el archivo de log
     cliente.detener()                  cierra el cliente
 
@@ -85,6 +86,13 @@ class Bandeja:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Configuración…", lambda: self._abrir_configuracion()
+            ),
+            # Con Windows, el gancho global de teclado puede quedarse
+            # desenganchado; el cliente lo vigila solo, y aquí está el botón
+            # para forzarlo sin cerrar nada (2026-11-19).
+            pystray.MenuItem(
+                "Reiniciar escucha de teclas",
+                lambda: self._cliente.reiniciar_escucha_teclado(),
             ),
             pystray.MenuItem("Ver registro", lambda: self._cliente.abrir_registro()),
             pystray.MenuItem("Salir", lambda: self._cliente.detener()),

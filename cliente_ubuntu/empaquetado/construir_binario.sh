@@ -47,6 +47,24 @@ if [ "$reconstruir_imagen" -eq 1 ] || ! docker image inspect "$IMAGEN" >/dev/nul
     docker build -t "$IMAGEN" -f "$AQUI/Dockerfile.compilacion" "$AQUI"
 fi
 
+# ─── Clave del proxy ────────────────────────────────────────────────────────
+# Se incrusta en el binario, igual que se hace en el APK: el usuario final no
+# la ve ni la escribe (2026-11-19). Se toma de DICTADO_PUENTE_CLAVE o, si no
+# está, de cliente_android/local.properties (que no se versiona).
+CLAVE_PROXY="${DICTADO_PUENTE_CLAVE:-}"
+if [ -z "$CLAVE_PROXY" ] && [ -f "$PROYECTO/clave_proxy.txt" ]; then
+    CLAVE_PROXY="$(head -n1 "$PROYECTO/clave_proxy.txt" | tr -d '\r\n')"
+fi
+if [ -z "$CLAVE_PROXY" ] && [ -f "$RAIZ/cliente_android/local.properties" ]; then
+    CLAVE_PROXY="$(sed -n 's/^dictadoClave=//p' "$RAIZ/cliente_android/local.properties" | head -n1)"
+fi
+if [ -n "$CLAVE_PROXY" ]; then
+    echo "== La clave del proxy se incrustará en el binario (${#CLAVE_PROXY} caracteres) =="
+else
+    echo "AVISO: no hay clave del proxy (DICTADO_PUENTE_CLAVE ni local.properties)."
+    echo "       El paquete solo servirá contra el puente local (http://127.0.0.1:8000)."
+fi
+
 mkdir -p "$SALIDA" "$CACHE/ccache" "$CACHE/nuitka" "$CACHE/pip"
 
 echo "== Compilando la versión $VERSION en Ubuntu 22.04 =="
@@ -55,6 +73,7 @@ docker run --rm \
     -e VERSION="$VERSION" \
     -e UID_HOST="$(id -u)" \
     -e GID_HOST="$(id -g)" \
+    -e DICTADO_PUENTE_CLAVE="$CLAVE_PROXY" \
     -e CCACHE_DIR=/ccache \
     -e PIP_NO_CACHE_DIR=0 \
     -v "$RAIZ":/src:ro \

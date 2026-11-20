@@ -34,9 +34,10 @@ try:  # compartido con los dos clientes
 except Exception:  # pragma: no cover - solo si falta el archivo
     modulo_skills = None
 
-# Puente en esta misma computadora: es lo que se propone cuando el JSON no trae
-# dirección. Se puede cambiar por la de otra máquina o por la de nginx.
-PUENTE_POR_DEFECTO = "http://127.0.0.1:8000"
+# Dirección pública del puente: es lo que se propone cuando el JSON no trae
+# dirección. Sirve desde cualquier red; para el puente en esta misma
+# computadora también vale http://127.0.0.1:8000.
+PUENTE_POR_DEFECTO = "https://dictado.hlquantlabs.trade"
 
 ACCIONES = [
     "abre",
@@ -1045,29 +1046,45 @@ class VentanaConfiguracion:
 
         puente = ttk.LabelFrame(marco, text="Puente (cuentas y perfil)", padding=8)
         puente.pack(fill="x")
-        fila = ttk.Frame(puente)
+        # Del puente solo se enseña un resumen: al usuario no le sirve la
+        # dirección y, si la toca, deja el cliente sin dictar. Los campos
+        # técnicos viven detrás de «Avanzado» (2026-11-19).
+        self.texto_puente = tk.StringVar(value="")
+        ttk.Label(puente, textvariable=self.texto_puente).pack(anchor="w")
+        self.var_avanzado = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            puente,
+            text="Avanzado (dirección y clave del proxy)",
+            variable=self.var_avanzado,
+            command=self._alternar_avanzado,
+        ).pack(anchor="w", pady=(6, 0))
+        self.marco_avanzado = ttk.Frame(puente)
+        fila = ttk.Frame(self.marco_avanzado)
         fila.pack(fill="x")
         ttk.Label(fila, text="Dirección:", width=16).pack(side="left")
         ttk.Entry(fila, textvariable=self.var_puente).pack(
             side="left", fill="x", expand=True
         )
-        fila = ttk.Frame(puente)
+        fila = ttk.Frame(self.marco_avanzado)
         fila.pack(fill="x", pady=(6, 0))
         ttk.Label(fila, text="Clave del proxy:", width=16).pack(side="left")
         ttk.Entry(fila, textvariable=self.var_puente_clave, show="•").pack(
             side="left", fill="x", expand=True
         )
         ttk.Label(
-            puente,
+            self.marco_avanzado,
             text=(
-                "Es el puente web, no el servidor de dictado. Si está en esta misma "
-                f"computadora, la dirección es {PUENTE_POR_DEFECTO}. La clave del "
-                "proxy solo se rellena si el puente está detrás de nginx."
+                "Es el puente web, no el servidor de dictado. La dirección "
+                f"pública es {PUENTE_POR_DEFECTO}; si el puente corre en esta "
+                "misma computadora también sirve http://127.0.0.1:8000. La clave "
+                "del proxy es obligatoria al entrar por el dominio: sin ella "
+                "nginx responde 403."
             ),
             foreground="#666",
             wraplength=720,
             justify="left",
         ).pack(anchor="w", pady=(6, 0))
+        self.texto_puente.set(self._resumen_puente())
 
         acceso = ttk.LabelFrame(marco, text="Tu cuenta", padding=8)
         acceso.pack(fill="x", pady=(10, 0))
@@ -1105,6 +1122,26 @@ class VentanaConfiguracion:
             wraplength=760,
             justify="left",
         ).pack(anchor="w", pady=(10, 0))
+
+    def _resumen_puente(self):
+        """Lo que ve el usuario: a qué servidor apunta, sin datos técnicos."""
+        direccion = self.var_puente.get().strip() or PUENTE_POR_DEFECTO
+        # `clave_proxy` mira el entorno, la clave incrustada al compilar y, al
+        # final, la del JSON: el resumen dice la verdad sin que el usuario
+        # tenga que saber que existe una clave.
+        tiene_clave = bool(perfil_cuenta.clave_proxy(self._config_puente()))
+        return (
+            f"Servidor: {direccion}"
+            + ("  ·  clave del proxy configurada" if tiene_clave else "")
+        )
+
+    def _alternar_avanzado(self):
+        """Muestra u oculta los campos técnicos del puente."""
+        if self.var_avanzado.get():
+            self.marco_avanzado.pack(fill="x", pady=(6, 0))
+        else:
+            self.marco_avanzado.pack_forget()
+        self.texto_puente.set(self._resumen_puente())
 
     def _config_puente(self):
         """Configuración tal como está en la ventana (aún sin guardar)."""
@@ -1159,8 +1196,8 @@ class VentanaConfiguracion:
         if not direccion:
             messagebox.showwarning(
                 "Cuenta",
-                "Falta la dirección del puente.\n\nSi el puente está en esta misma "
-                f"computadora, escribe {PUENTE_POR_DEFECTO}.",
+                "Falta la dirección del puente.\n\nLa dirección pública es "
+                f"{PUENTE_POR_DEFECTO}.",
                 parent=self.raiz,
             )
             return False
@@ -1290,6 +1327,7 @@ class VentanaConfiguracion:
         # porque son del servidor, no del usuario.
         datos["puente"] = self.var_puente.get().strip()
         datos["puente_clave"] = self.var_puente_clave.get().strip()
+        self.texto_puente.set(self._resumen_puente())
 
         for clave, (tipo, var) in self._campos.items():
             if tipo == "bool":

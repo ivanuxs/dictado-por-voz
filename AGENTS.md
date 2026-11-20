@@ -169,10 +169,14 @@ del celular (gratis); **el servidor y las funciones avanzadas son de pago**.
 - Planes (tres): Gratis (motor del celular: no usa nuestro servidor ni gasta GPU) ·
   Básico (30 min y 50 traducciones al día, 1
   dispositivo) · Pro
-  (dictado en vivo y 3 dispositivos). **Pro no tiene tope diario** (2026-11-18):
+  (dictado en vivo y 5 dispositivos). **Pro no tiene tope diario** (2026-11-18):
   `minutos_dia` y `traducciones_dia` son `None` (ilimitado, sale como `null` en el JSON).
+  ⚠️ `planes.minutos_restantes()` y `traducciones_restantes()` **devuelven `None`** cuando el
+  tope es `None`; restar a ciegas reventaba con `NoneType - float` y el puente devolvía
+  **500 en cada dictado de una cuenta Pro** (2026-11-19). La excepción la imprime uvicorn
+  en `journalctl --user -u puente-web`, no en el registro del puente.
   Lo que sigue acotando el abuso es la cola (una transcripción y una traducción a la vez),
-  los 60 s por petición y los 3 dispositivos. Uso por día en UTC;
+  los 60 s por petición y los 5 dispositivos. Uso por día en UTC;
   **429** con el motivo al agotarse.
 - Sin SMTP el registro funciona **sin verificar** el correo (modo pruebas) y el puente lo
   avisa al arrancar. Con SMTP (Gmail con contraseña de aplicación o uno propio), el código
@@ -222,6 +226,18 @@ del celular (gratis); **el servidor y las funciones avanzadas son de pago**.
   - Configuración: `"puente": "https://…"` y `"puente_clave": "…"` en `comandos.json`
     (es el **puente web**, no el servidor de dictado). Se editan en la pestaña **Cuenta**
     de la ventana, que también tiene Entrar / Crear cuenta / Cerrar sesión / Sincronizar.
+    Desde el 2026-11-19 la pestaña muestra **solo un resumen** («Servidor: …») y los campos
+    de dirección y clave viven detrás de una casilla **«Avanzado»**: al usuario no le sirven
+    y, si toca la dirección, deja el cliente sin dictar.
+  - **La dirección es el dominio público** (`https://dictado.hlquantlabs.trade`, el mismo que
+    usa el APK), no una IP de la LAN: así funciona desde cualquier red. Al entrar por el
+    dominio **hace falta la clave del proxy** (cabecera `X-Clave-Cliente`; sin ella nginx
+    responde **403**). Desde el 2026-11-19 la clave **se incrusta al compilar**
+    (`clave_proxy_compilada.py`, generado por `preparar_clave.py` en Windows y por
+    `compilar_en_contenedor.sh` en Ubuntu, y excluido de Git): **el usuario final nunca ve ni
+    escribe la clave**, igual que en el APK. Orden en `perfil.clave_proxy()`: entorno →
+    módulo compilado → `clave_proxy.txt` junto al programa → JSON. Sin clave, el binario solo
+    sirve contra el puente local y el login avisa de que falta la clave del proxy.
   - El diccionario **local manda**: si el puente no responde se dicta y se aprende igual;
     una hebra sincroniza cada 15 minutos y nunca toca el camino del dictado.
   - Las correcciones se aplican al texto dictado (`se ace` → `seace`), también las de
@@ -231,6 +247,56 @@ del celular (gratis); **el servidor y las funciones avanzadas son de pago**.
     los dos archivos **no** son iguales: no copies uno sobre otro.
 - Pendiente: entrega 3 (Google Play Billing: Google exige Billing para vender dentro de la
   app) y que el teclado de Android haga su primera sincronización real contra el puente.
+
+### Autenticación del servidor de dictado (2026-11-19)
+
+Hasta hoy el servidor ZMQ (otro repositorio: `servidor_dictado`) **no sabía qué era una
+cuenta**: quien tuviera la dirección `IP:5555` dictaba, y el permiso solo lo comprobaba el
+cliente. Eso se cerró en dos frentes:
+
+- **En el cliente** (`_on_press` de `cliente_voz.py`, Ubuntu y Windows): la tecla activadora
+  llamaba a `_cuenta_lista()` **solo** en el icono y en la palabra clave, así que `Ctrl+Espacio`
+  dictaba sin sesión. Ahora la comprueba en los dos modos (`toggle` y `mantener`).
+- **En el servidor** (`servidor_dictado/servidor_voz.py`): `_EstadoCliente.autenticado`
+  sustituye al booleano **global** `_autenticado` (en cuanto uno entraba, quedaban aceptados
+  todos). El `AUTH` se acepta con (a) el token interno `DICTADO_TOKEN` —lo usa el puente vía
+  `DICTADO_ZMQ_TOKEN`— o (b) el token de una **cuenta viva**, validado contra
+  `GET /api/v1/yo` del puente (`DICTADO_PUENTE`, con caché de 60 s).
+- Los clientes de escritorio mandan `AUTH` con `sesion.token()` al conectar y cada vez que
+  cambia la sesión (`_autenticar()`, revisado en el ping de 10 s), y tratan `AUTH_OK` /
+  `AUTH_FAIL` como mensajes propios.
+- ⚠️ **Se activa con `DICTADO_EXIGIR_CUENTA=1`** en la unidad del servidor. Sin esa variable
+  todo sigue aceptando a cualquiera, para no cortar a los clientes sin recompilar. Orden
+  correcto: reiniciar el servidor (sin la variable) → recompilar/reinstalar los clientes →
+  poner `DICTADO_TOKEN` en el servidor y `DICTADO_ZMQ_TOKEN` en el puente → activar
+  `DICTADO_EXIGIR_CUENTA=1`. El audio de un cliente sin cuenta se rechaza **una vez** por
+  conexión (`estado.avisado_auth`), no en cada trozo de 64 ms.
+
+### Transporte del audio en el escritorio: puente HTTPS (2026-11-19)
+
+El escritorio hablaba **ZMQ directo** al servidor (`IP:5555`), y ese puerto **no está
+publicado** en internet: desde otra red no se podía dictar. El dominio
+(`dictado.hlquantlabs.trade`) solo tiene abierto el 443 (nginx → puente). Por eso los clientes
+de Ubuntu y Windows ahora pueden mandar el audio **por el mismo puente que el celular**:
+
+- Módulo compartido `puente_dictado.py` (idéntico en las dos carpetas). Habla con
+  `POST /api/v1/transcribe`: WAV PCM 16 bits mono 16 kHz en el cuerpo, `Authorization: Bearer
+  <token de la cuenta>` y `X-Clave-Cliente` (la clave del proxy, la misma de `perfil.py`).
+  Respuesta: `{"transcript": "…"}`. Solo `urllib`, sin dependencias nuevas.
+- La elección se hace al arrancar (`_elegir_transporte`), con la clave `"transporte"` de
+  `comandos.json`: `auto` (por defecto) usa el **puente** si hay sesión y responde, y ZMQ si
+  no; `puente` y `zmq` fuerzan uno.
+- En modo puente el audio **no** viaja por ZMQ: se acumula solo mientras se dicta
+  (`_acumular_puente`) y al cerrar se manda en una hebra (`_lanzar_transcripcion_puente`); el
+  resultado vuelve por la cola de eventos como `("puente_texto", texto, error)` y se despacha
+  igual que un `TEXTO` de ZMQ (dictado, corrección de orden o consulta).
+- ⚠️ **Acumular solo durante el dictado**: el micrófono se captura siempre (para la palabra
+  clave), así que acumular sin mirar `self._grabando` llenaba el tope en un minuto de uso y
+  avisaba «el dictado pasa de 55 s» sin haber dictado nada (visto al probarlo).
+- Topes: el puente admite 60 s y 5 MB por petición; aquí se corta a
+  `puente_dictado.SEGUNDOS_MAXIMOS` (55 s) y se avisa. **No hay dictado en vivo** (parciales)
+  por el puente: el texto llega al final.
+- ZMQ sigue existiendo (red local, pruebas del servidor y respaldo si el puente no responde).
 
 ### Cliente Android (`cliente_android/`)
 
@@ -594,9 +660,59 @@ una orden cuando el cliente se lo pide.
   configuradas, con **6 s sin voz** o con el tope de 180 s.
 - Seguros del modo comando: **15 s** sin oír nada → se cierra con pitido `error` y no se transcribe
   nada. Con los comandos **en pausa** desde el icono, la clave abre un dictado normal.
-- En la PC la escucha local viene **apagada** (`"escucha_local": false`): sin
-  ella, la clave la sigue detectando el Vosk del servidor, como siempre.- Windows no publica ningún evento de «otro programa tomó el micrófono»: la
+- En la PC la escucha local viene **apagada** (`"escucha_local": false`). Sin ella **la palabra
+  clave no funciona en Windows**: el servidor dejó de detectarla (solo transcribe), así que se
+  dicta con la tecla activadora o con el icono. Antes decía que la seguía detectando «el Vosk
+  del servidor»: eso ya no es cierto.
+- Windows no publica ningún evento de «otro programa tomó el micrófono»: la
   escucha se pausa a mano desde el icono, y se libera al dictar.
+- ⚠️ **El gancho de teclado se desengancha y el cliente se queda sordo sin avisar**
+  (2026-11-19, PC `192.168.1.186`: a las 14:21 dejaron de llegar teclas y el registro siguió
+  con latidos hasta las 14:35, con el proceso vivo y la cuenta validada). Causa: `_on_press`
+  corría dentro del gancho de bajo nivel y llamaba a `_mostrar_indicador()`, que crea una
+  ventana Tkinter y **espera hasta 10 s** (`listo.wait(timeout=10)` en `indicador_grabacion.py`).
+  Windows desengancha los ganchos que tardan más de ~300 ms (`LowLevelHooksTimeout`): desde ese
+  momento `Ctrl+Espacio` no vuelve a llegar hasta reiniciar. Arreglo, en Ubuntu y Windows:
+  - El callback **solo** marca estado y encola `indicador_on` / `indicador_off`; Tk se toca en
+    el bucle principal (`_procesar_eventos`). **No metas trabajo bloqueante en `_on_press`.**
+  - El `Listener` se guarda en `self._listener` y `_vigilar_teclado()` lo revisa cada 5 s: si
+    `running` es falso, lo vuelve a levantar y lo registra con pitido `error`. Deja un latido
+    cada 5 min con las pulsaciones vistas.
+  - Menú del icono: **«Reiniciar escucha de teclas»** (Windows, método directo; Ubuntu,
+    `SIGRTMIN+4` → `senal_cliente.enviar_teclado()`), para recuperarlo sin reiniciar el cliente.
+- **Robustez del arranque (2026-11-19)**, tras «deja de funcionar solo» sin dejar rastro:
+  `sys.excepthook` y `threading.excepthook` escriben `[ERROR NO CONTROLADO]` con la traza en
+  el registro; el bucle principal atrapa sus excepciones (`self._fallo`); `_bucle_cliente()`
+  crea un `ClienteVoz` nuevo y lo **relanza** si murió sin pedir cierre (se rinde tras 5 caídas
+  en menos de 30 s); un mutex `SkipKeyClienteVoz` impide dos copias (se peleaban por el
+  micrófono y la bandeja). Y `rotar_logs_al_iniciar()` se llama **solo** al arrancar el cliente:
+  antes `--configuracion` y `--probar-*` son procesos del mismo `.exe` y **vaciaban el registro**
+  del cliente en marcha en cada uso.
+
+#### Instalador de Windows (`cliente_windows/instalador/`)
+
+Un solo archivo para entregar: `SkipKey_Instalador_<versión>.exe`, hecho con **Inno Setup 6 o
+superior** (probado con 7; solo hace falta en la PC donde se compila). Se genera con
+`instalador/crear_instalador.bat`, que compila el cliente si falta, comprueba la clave y llama a
+`ISCC.exe` (lo busca en las rutas de Inno 5/6/7, en el PATH y, si no, barriendo `Program Files`;
+si aun así no aparece, pide la ruta).
+
+- Instala **por usuario** en `%LOCALAPPDATA%\Programs\SkipKey` (`PrivilegesRequired=lowest`):
+  en `Program Files` no se podría escribir `comandos_windows.json` ni `logs\`.
+- Cierra `ClienteVoz.exe` antes de copiar (`taskkill` en `[Code]`) y conserva
+  `comandos_windows.json` al actualizar (`onlyifdoesntexist`); al desinstalar borra la configuración
+  y `logs\` desde `[UninstallDelete]` (la configuración lleva la clave del proxy de esa PC).
+- **El arranque al iniciar sesión lo pone un acceso directo en `{userstartup}`**, no una tarea
+  programada: `schtasks` con disparador ONLOGON devuelve «acceso denegado» sin elevación y el
+  cliente no arrancaba con Windows (2026-11-19). `--instalar` también crea ese acceso (para
+  instalaciones manuales) y borra la tarea vieja `ClienteVoz` si existía.
+- `crear_instalador.bat --recompilar` rehace el cliente aunque exista un `ClienteVoz.exe`
+  viejo: sin eso, el instalador empaquetaría la versión anterior.
+- `[Run]` registra el arranque con `ClienteVoz.exe --instalar --silencioso` y `[UninstallRun]` lo
+  quita con `--desinstalar --silencioso`; **`--silencioso`** existe para eso: sin él los dos modos
+  abren un cuadro de diálogo modal que rompería una instalación desatendida.
+- El `.iss` no fija arquitecturas (para no exigir Inno 6.3+) y usa `icono.ico`
+  (generado desde `cliente_ubuntu/empaquetado/icono.png`).
 
 ### Modos de activación
 - **Toggle** (por defecto): un clic para empezar a grabar, otro clic para detener.
@@ -679,9 +795,28 @@ dos formatos desde el mismo binario: `skipkey_<versión>_amd64.deb` y
   `dbus` (auricular) entren en el binario.
 - ⚠️ **Un solo ejecutable**: los hijos que en modo fuente se lanzan como scripts ahora se
   lanzan con banderas internas del propio binario — `--bandeja`, `--mpris`, `--ventana`,
-  atendidas en el `if __name__ == "__main__"` de `cliente_voz.py`. En modo fuente **no** se
-  usan: se sigue lanzando `bandeja_ubuntu.py`/`mpris_dictado.py` con `/usr/bin/python3`.
+  `--indicador`, atendidas en el `if __name__ == "__main__"` de `cliente_voz.py`. En modo fuente
+  **no** se usan: se sigue lanzando `bandeja_ubuntu.py`/`mpris_dictado.py` con `/usr/bin/python3`.
   Si se añade otro proceso hijo, tiene que seguir el mismo patrón o se rompe solo el paquete.
+- ⚠️ **El indicador «REC» va en su propio proceso** (`--indicador`). Antes, en el binario, se
+  creaba la ventana Tkinter en un hilo del propio cliente y **el cliente se quedaba congelado
+  justo al empezar a dictar** (2026-11-19, 17:42: última línea del registro en `DICTADO_START`,
+  sin latidos, el segundo `Ctrl+Espacio` no llegaba y había que cerrar la aplicación). En
+  Windows, además, crearlo desde el gancho desenganchaba el teclado. `_mostrar_indicador()`
+  lanza `--indicador` (o `indicador_grabacion.py` en modo fuente) y `_ocultar_indicador()` lo
+  termina. **Tkinter no se crea nunca dentro del proceso del cliente.**
+- ⚠️ **Sin servidor, el cliente se congelaba** (2026-11-19, instalación nueva en oficina-7).
+  Un DEALER sin peer acumula mensajes hasta el HWM (1000 ≈ 62 s de audio) y entonces
+  `send_multipart` **bloquea para siempre**: el bucle principal deja de latir, la tecla no se
+  atiende y el cliente hay que cerrarlo (`poll(fds, 1, -1)` en `/proc/<pid>/syscall`). Arreglo:
+  `SNDHWM=300`, `LINGER=0` y **todos** los envíos por `_enviar()`, que usa `zmq.NOBLOCK`,
+  descarta audio y avisa una sola vez («Sin conexión: se descarta el audio»). No volver a
+  usar `self._socket.send_multipart` directo. Y los pitidos (`sonidos.py`) van en su propio
+  hilo con `timeout`: `paplay` puede quedarse esperando al servidor de audio.
+- ⚠️ **La dirección del servidor va en `comandos.json`** (`"servidor": "192.168.1.2:5555"`).
+  Sin esa clave se usaba `127.0.0.1:5555`, que solo vale en la PC del servidor: cualquier
+  instalación nueva se quedaba sin dictar. El dominio público (`dictado.hlquantlabs.trade`)
+  **solo tiene abierto el 443** (nginx → puente): ZMQ no puede ir por ahí todavía.
 - `_congelado()` (en `cliente_voz.py`, `bandeja_ubuntu.py` y `ventana_configuracion.py`)
   reconoce PyInstaller (`sys.frozen`) y Nuitka (`__compiled__`). No usar
   `getattr(sys, "frozen", False)` suelto.
@@ -700,6 +835,15 @@ dos formatos desde el mismo binario: `skipkey_<versión>_amd64.deb` y
 - ⚠️ **`--include-package-data` choca con los `.so` de onnxruntime/ctranslate2**
   («data file … conflicts with dll»). Solo se pide para `faster_whisper` (su
   `silero_vad_v6.onnx`) y `huggingface_hub`.
+- ⚠️ **En Nuitka `sys.executable` vale `…/python` y ese archivo no existe** (2026-11-19): los
+  procesos hijos (`--bandeja`, `--mpris`, `--ventana`) fallaban con «No such file or directory»
+  y el icono no aparecía nunca en el paquete. Se lanzan con `_ruta_programa()`, que usa
+  `sys.argv[0]` resuelto (`os.path.realpath`) y comprobado con `os.access`.
+- ⚠️ **La pila de fuentes no viaja dentro del paquete** (2026-11-19):
+  `--noinclude-dlls=libfontconfig*`, `libfreetype*` y `libharfbuzz*`. Nuitka metía las de
+  Ubuntu 22.04 y el `libpangoft2` del sistema pedía `FcConfigSetDefaultSubstitute`, que esa
+  versión no tiene: el icono (PyGObject + GTK del sistema) no arrancaba con «Failed to load
+  shared library 'libgdk-3.so.0'». Esa pila la pone el escritorio.
 - **Destino con `.deb`**: programa en `/opt/skipkey/`, configuración en
   `~/.config/skipkey/comandos.json` (en `/opt` no se puede escribir: es de root),
   registros en `~/.local/state/skipkey/logs/` y unidad en `/usr/lib/systemd/user/`.
@@ -712,6 +856,11 @@ dos formatos desde el mismo binario: `skipkey_<versión>_amd64.deb` y
   y el `AppRun` ejecuta el binario **en su sitio**, porque sus librerías se resuelven con
   `$ORIGIN`. No lleva GTK dentro: el host necesita `libgtk-3`, `libayatana-appindicator3`,
   `libdbus-1-3`, `ffmpeg` y `xclip`, y en Ubuntu 24.04 `libfuse2t64`.
+- **El paquete se explica solo** (2026-11-19): `INSTALAR_EN_OTRA_PC.md` viaja como dato dentro
+  del binario y `--ayuda` lo imprime; en el primer arranque (cuando se crea `comandos.json`) el
+  registro avisa de lo que falta (cuenta, arranque, atajo de GNOME y paquetes). Un AppImage
+  copiado a otro equipo no tiene instalador donde poner las notas, y sin ellas se culpa a la
+  aplicación.
 - El `.deb` **no** puede meter `libgtk-3-0`, `libayatana-appindicator3-1`, `libdbus-1-3`,
   `gir1.2-*`, `ffmpeg`, `xclip`, `scrot` ni `xdotool`: van en `Depends:` y los instala
   `apt`. Tampoco el modelo de voz: faster-whisper `base` se descarga la primera vez que se

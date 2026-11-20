@@ -20,6 +20,16 @@ cp -a "$FUENTE"/. "$TRABAJO"/
 rm -rf "$TRABAJO/logs" "$TRABAJO/empaquetado" "$TRABAJO"/__pycache__
 cd "$TRABAJO"
 
+echo "== Clave del proxy para el binario =="
+# Se incrusta como módulo, igual que en el APK: el usuario final no la ve ni la
+# escribe. Se genera SIEMPRE (aunque esté vacía) para que el import exista.
+printf 'CLAVE = "%s"\n' "${DICTADO_PUENTE_CLAVE:-}" > "$TRABAJO/clave_proxy_compilada.py"
+if [ -n "${DICTADO_PUENTE_CLAVE:-}" ]; then
+    echo "   incrustada (${#DICTADO_PUENTE_CLAVE} caracteres)"
+else
+    echo "   AVISO: vacía; el paquete solo servirá contra el puente local"
+fi
+
 echo "== Creando el entorno de compilación =="
 # --system-site-packages es obligatorio: `gi` y `dbus` solo existen en el
 # Python del sistema (python3-gi / python3-dbus) y hay que compilarlos dentro
@@ -78,6 +88,12 @@ echo "== Compilando con Nuitka (esto tarda 30-60 min la primera vez) =="
 #   medio sistema (Vte, Poppler, …) y aborta la compilación. Con `gi` incluido
 #   a mano funciona igual: el importador dinámico de typelibs sigue dentro.
 # --python-flag=no_docstrings: quita los docstrings del bytecode (menos peso).
+# --noinclude-dlls de la pila de fuentes (2026-11-19): Nuitka metía la
+#   libfontconfig/libfreetype/libharfbuzz de Ubuntu 22.04, y el libpangoft2 del
+#   sistema (más nuevo) necesita símbolos que esa versión no tiene:
+#       undefined symbol: FcConfigSetDefaultSubstitute
+#   El icono de la bandeja (PyGObject + GTK del sistema) no arrancaba con el
+#   paquete. Esa pila la pone el escritorio; no debe viajar dentro.
 # shellcheck disable=SC2086  # la lista de paquetes se expande a propósito
 "$ENTORNO/bin/python" -m nuitka \
     --standalone \
@@ -87,7 +103,11 @@ echo "== Compilando con Nuitka (esto tarda 30-60 min la primera vez) =="
     --python-flag=no_docstrings \
     --lto=yes \
     --nofollow-import-to=unittest,pydoc,doctest,setuptools,pip,test,tests \
+    --noinclude-dlls=libfontconfig* \
+    --noinclude-dlls=libfreetype* \
+    --noinclude-dlls=libharfbuzz* \
     --include-data-file=comandos.json=comandos.json \
+    --include-data-file=INSTALAR_EN_OTRA_PC.md=INSTALAR_EN_OTRA_PC.md \
     --report=/salida/informe-nuitka.xml \
     --output-dir="$SALIDA_NUITKA" \
     --output-filename=skipkey \

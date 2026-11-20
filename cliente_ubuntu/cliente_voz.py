@@ -16,6 +16,28 @@ import time
 import webbrowser
 from urllib.parse import quote_plus
 
+# `--ayuda` se atiende ANTES de importar pyautogui/zmq: esas bibliotecas
+# necesitan pantalla y, sin ella (SSH, servidor), el import revienta con
+# `KeyError: 'DISPLAY'`. El manual tiene que poder leerse en cualquier sitio.
+if __name__ == "__main__" and any(
+    a in sys.argv[1:] for a in ("--ayuda", "--help", "-h")
+):
+    _bases = []
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        _bases.append(os.path.dirname(sys.executable))
+    _bases.append(os.path.dirname(os.path.abspath(__file__)))
+    for _base in _bases:
+        _ruta = os.path.join(_base, "INSTALAR_EN_OTRA_PC.md")
+        if os.path.exists(_ruta):
+            with open(_ruta, encoding="utf-8") as _archivo:
+                print(_archivo.read())
+            raise SystemExit(0)
+    print(
+        "No encuentro INSTALAR_EN_OTRA_PC.md dentro del paquete.\n"
+        "El manual está en el repositorio, en cliente_ubuntu/."
+    )
+    raise SystemExit(0)
+
 import numpy as np
 import pyautogui
 import pyperclip
@@ -26,8 +48,9 @@ from pynput import keyboard
 from protocolo import (
     AUDIO, DICTADO_START, DICTADO_STOP,
     TEXTO, TEXTO_PARCIAL, FIN_DICTADO, PING, PONG, ESTADO,
+    AUTH_OK, AUTH_FAIL,
     CHUNK_MUESTRAS,
-    crear_audio, crear_dictado_start, crear_dictado_start_vivo,
+    crear_audio, crear_auth, crear_dictado_start, crear_dictado_start_vivo,
     crear_dictado_start_voz, crear_dictado_stop, crear_ping,
     decodificar_texto,
 )
@@ -35,6 +58,7 @@ from marcas import aplicar_configuracion as aplicar_marcas
 from marcas import es_comando, parsear, resolver
 import marcas
 import perfil as perfil_cuenta
+import puente_dictado
 import sesion
 from diccionario_desktop import DiccionarioEscritorio
 
@@ -120,6 +144,11 @@ ORDEN_MAX_PALABRAS_ARGUMENTO = 2
 # solo ocurre si de verdad no se dice nada.
 MODO_COMANDO_MAX_SEGUNDOS = 60
 
+# Rebote de las señales de control: la autorrepetición del atajo de GNOME (o un
+# doble envío) mandaría dos SIGUSR1 separados por milisegundos y el dictado se
+# arrancaría y se pararía a la vez (2026-11-19).
+DEBOUNCE_SENAL = 0.35
+
 
 def _congelado():
     """True si corremos dentro de un ejecutable empaquetado.
@@ -129,6 +158,23 @@ def _congelado():
     mismo código sirva en las dos formas de empaquetar y en modo fuente.
     """
     return bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
+
+
+def _ruta_programa():
+    """Ruta del binario real, también dentro del paquete.
+
+    En Nuitka standalone `sys.executable` vale `…/python`, que **no existe** en
+    el paquete: los hijos (`--bandeja`, `--mpris`) fallaban con «No such file
+    or directory» y el icono no aparecía nunca (2026-11-19). El binario de
+    verdad es el que se lanzó, es decir `sys.argv[0]`.
+    """
+    for candidato in (sys.argv[0], sys.executable):
+        if not candidato:
+            continue
+        ruta = os.path.realpath(candidato)
+        if os.path.isfile(ruta) and os.access(ruta, os.X_OK):
+            return ruta
+    return sys.executable
 
 
 def _directorio_base():
@@ -218,9 +264,9 @@ def _escribir_estado(escucha, comandos, grabando):
 
 
 def _asegurar_config():
-    """Crea la configuración junto al exe si no existe (usa la empaquetada)."""
+    """Crea la configuración si no existe. Devuelve True si la creó."""
     if os.path.exists(RUTA_JSON):
-        return
+        return False
     try:
         fuente = None
         if _congelado():
@@ -237,8 +283,45 @@ def _asegurar_config():
             os.makedirs(os.path.dirname(RUTA_JSON), exist_ok=True)
             shutil.copy2(fuente, RUTA_JSON)
             imprimir(f"[CLIENTE] Configuración creada: {RUTA_JSON}")
+            return True
     except Exception as e:
         imprimir(f"[CLIENTE] No se pudo crear configuración: {e}")
+    return False
+
+
+def _avisar_primer_arranque():
+    """Explica lo que falta tras copiar el paquete a un equipo nuevo.
+
+    Sin este aviso, el que copia el AppImage cree que está todo y culpa a la
+    aplicación cuando en realidad faltan la cuenta, el arranque y el atajo.
+    """
+    imprimir(
+        "[PRIMER ARRANQUE] Cliente recién instalado. Falta esto, una sola vez:\n"
+        "  1) Entrar con tu cuenta: icono de la bandeja → Configuración… → "
+        "Cuenta.\n"
+        "  2) Arranque al iniciar sesión: systemctl --user enable --now skipkey "
+        "(o un .desktop en ~/.config/autostart).\n"
+        "  3) Ctrl+Espacio: en Wayland lo manda GNOME con «systemctl --user kill "
+        "--kill-who=main -s SIGUSR1 skipkey»; el cliente no puede capturar "
+        "teclas globales.\n"
+        "  Paquetes del escritorio: libgtk-3-0 libayatana-appindicator3-1 "
+        "libdbus-1-3 ffmpeg xclip.\n"
+        "  Manual completo: ejecuta este programa con --ayuda."
+    )
+
+
+def _revisar_dependencias():
+    """Avisa de los programas externos que faltan, con la orden de instalarlos."""
+    paquetes = {"ffmpeg": "ffmpeg", "xclip": "xclip"}
+    faltan = [nombre for nombre in paquetes if shutil.which(nombre) is None]
+    if faltan:
+        imprimir(
+            "[AVISO] Faltan programas del sistema: "
+            + ", ".join(faltan)
+            + ". Instálalos con: sudo apt install "
+            + " ".join(paquetes[nombre] for nombre in faltan)
+            + " (o su equivalente en tu distribución)."
+        )
 
 
 # Dirección del servidor usada cuando no se indica otra cosa.
@@ -961,29 +1044,28 @@ def _hablar_respuesta(texto):
 # ---------------------------------------------------------------------------
 
 def _mostrar_indicador():
-    global _indicador_proceso, _indicador_ventana
+    global _indicador_proceso
+    if _indicador_proceso is not None:
+        return
+    # En el paquete se relanza el propio binario con `--indicador` (igual que
+    # `--bandeja` o `--mpris`): Tk **nunca** se crea dentro de este proceso.
+    # Antes, en el binario, se creaba la ventana en un hilo de este mismo
+    # proceso y Tkinter dejaba el cliente **congelado** justo al empezar a
+    # dictar: no había latidos, no llegaba la tecla de parar y había que cerrar
+    # la aplicación (visto el 2026-11-19, 17:42).
     if _congelado():
-        # Ejecutable empaquetado: no hay python separado → ventana en un hilo
-        if _indicador_ventana is None:
-            from indicador_grabacion import iniciar_indicador
-            _indicador_ventana = iniciar_indicador()
+        orden = [_ruta_programa(), "--indicador"]
     else:
-        if _indicador_proceso is None:
-            _indicador_proceso = subprocess.Popen(
-                [sys.executable, RUTA_INDICADOR],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+        orden = [sys.executable, RUTA_INDICADOR]
+    _indicador_proceso = subprocess.Popen(
+        orden,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _ocultar_indicador():
-    global _indicador_proceso, _indicador_ventana
-    if _indicador_ventana is not None:
-        try:
-            _indicador_ventana.detener()
-        except Exception:
-            pass
-        _indicador_ventana = None
+    global _indicador_proceso
     if _indicador_proceso is not None:
         try:
             _indicador_proceso.terminate()
@@ -994,7 +1076,6 @@ def _ocultar_indicador():
 
 
 _indicador_proceso = None
-_indicador_ventana = None
 
 
 # ---------------------------------------------------------------------------
@@ -1006,6 +1087,15 @@ class ClienteVoz:
         self._direccion = direccion_servidor
         self._ctx = zmq.Context()
         self._socket = self._ctx.socket(zmq.DEALER)
+        # Sin servidor, un DEALER acumula mensajes hasta el HWM y então
+        # `send_multipart` se queda **esperando para siempre**: el bucle
+        # principal dejaba de latir, el segundo Ctrl+Espacio no se atendía y
+        # había que cerrar la aplicación (visto el 2026-11-19 en una instalación
+        # nueva que apuntaba a 127.0.0.1). Con el HWM bajo y envíos NOBLOCK, el
+        # cliente pierde audio en vez de morirse.
+        self._socket.setsockopt(zmq.LINGER, 0)
+        self._socket.setsockopt(zmq.SNDHWM, 300)
+        self._audio_sin_servidor = False   # ya se avisó de que se descarta
 
         # Cola para audio (desde callback de sounddevice → bucle ZMQ)
         self._cola_audio = queue.Queue(maxsize=200)
@@ -1087,6 +1177,39 @@ class ClienteVoz:
         self._frases_fin = ["fin del dictado"]
         # Icono de la barra superior: proceso hijo con el Python del sistema.
         self._bandeja = None
+        # Gancho global de teclado (2026-11-19): se guarda para vigilarlo. Un
+        # gancho de bajo nivel puede quedarse sin entregar teclas —en Windows
+        # pasa cuando el callback tarda, y aquí el indicador se pinta desde el
+        # callback— y entonces el cliente se queda sordo sin avisar. Se revisa
+        # cada 5 s y se levanta otra vez si se cayó.
+        self._listener = None
+        self._teclas_vistas = 0
+        self._ultimo_chequeo_teclas = 0.0
+        self._ultimo_latido_teclas = time.time()
+
+        # Transporte del audio (2026-11-19): "puente" (HTTPS, funciona desde
+        # cualquier red) o "zmq" (red local). Lo decide `_elegir_transporte()`
+        # al arrancar; el puente es el que usa el celular y el único publicado
+        # en internet (el 5555 no lo está).
+        self._transporte = "zmq"
+        self._token_transporte = sesion.token()  # con el que se eligió
+        self._pcm_puente = bytearray()      # audio acumulado para el puente
+        self._puente_ocupado = False        # hay un POST en curso
+        self._aviso_largo = False           # ya se avisó de que se recorta
+        # Señales de control externo (atajos de GNOME e icono) desde el primer
+        # instante: si un SIGUSR1 llega antes de `ejecutar()`, el manejador por
+        # defecto MATA el proceso (visto el 2026-11-19: status=10/USR1).
+        self._senal_pendiente = None
+        self._senal_momento = 0.0
+        if hasattr(signal, "SIGUSR1"):
+            signal.signal(signal.SIGUSR1, self._manejador_sigusr1)
+        if hasattr(signal, "SIGUSR2"):
+            signal.signal(signal.SIGUSR2, self._manejador_sigusr2)
+        if hasattr(signal, "SIGRTMIN"):
+            signal.signal(signal.SIGRTMIN + 1, self._manejador_escucha)
+            signal.signal(signal.SIGRTMIN + 2, self._manejador_comandos)
+            signal.signal(signal.SIGRTMIN + 3, self._manejador_recargar)
+            signal.signal(signal.SIGRTMIN + 4, self._manejador_teclado)
         # Se puede pausar desde el icono: lo dictado se escribe como texto.
         self.comandos_activos = True
         # True mientras el dictado en curso lo abrió la palabra clave: solo esos
@@ -1201,7 +1324,7 @@ class ClienteVoz:
         while self._activo:
             try:
                 if _congelado():
-                    comando = [sys.executable, "--mpris"]
+                    comando = [_ruta_programa(), "--mpris"]
                 else:
                     comando = [PYTHON_SISTEMA, RUTA_MPRIS]
                 proceso = subprocess.Popen(
@@ -1247,7 +1370,7 @@ class ClienteVoz:
         while self._activo:
             try:
                 if _congelado():
-                    comando = [sys.executable, "--bandeja"]
+                    comando = [_ruta_programa(), "--bandeja"]
                 else:
                     comando = [
                         PYTHON_SISTEMA, RUTA_BANDEJA, "--python", sys.executable
@@ -1376,22 +1499,45 @@ class ClienteVoz:
     # --- Callbacks de teclado ---
 
     def _manejador_sigusr1(self, signum, frame):
-        self._cola_eventos.put("toggle_normal")
+        # Solo se deja una marca: dentro de un manejador de señal no se puede
+        # tocar una `queue` (puede quedar bloqueada para siempre si la señal
+        # interrumpe justo esa misma cola). El trabajo lo hace `_atender_senal`.
+        self._senal_pendiente = "toggle_normal"
 
     def _manejador_sigusr2(self, signum, frame):
-        self._cola_eventos.put("toggle_escribir")
+        self._senal_pendiente = "toggle_escribir"
 
     def _manejador_escucha(self, signum, frame):
         """El icono de la bandeja pidió encender/apagar la escucha."""
-        self._cola_eventos.put("toggle_escucha")
+        self._senal_pendiente = "toggle_escucha"
 
     def _manejador_comandos(self, signum, frame):
         """El icono de la bandeja pidió pausar/reanudar los comandos."""
-        self._cola_eventos.put("toggle_comandos")
+        self._senal_pendiente = "toggle_comandos"
 
     def _manejador_recargar(self, signum, frame):
         """La ventana de configuración guardó: hay que releer el JSON."""
-        self._cola_eventos.put("recargar")
+        self._senal_pendiente = "recargar"
+
+    def _manejador_teclado(self, signum, frame):
+        """El icono pidió volver a enganchar la escucha de teclas."""
+        self._senal_pendiente = "reiniciar_teclado"
+
+    def _atender_senal(self):
+        """Pasa al bucle la señal pendiente, con rebote.
+
+        El rebote descarta la autorrepetición del atajo de GNOME: dos SIGUSR1
+        separados por milisegundos arrancarían y pararían el dictado a la vez.
+        """
+        pendiente = self._senal_pendiente
+        if not pendiente:
+            return
+        self._senal_pendiente = None
+        ahora = time.time()
+        if ahora - self._senal_momento < DEBOUNCE_SENAL:
+            return
+        self._senal_momento = ahora
+        self._cola_eventos.put(pendiente)
 
     def _recargar_configuracion(self):
         """Relee comandos.json sin reiniciar el cliente.
@@ -1632,10 +1778,9 @@ class ClienteVoz:
             imprimir("\n[GRABANDO... (comando) Di la orden o «iniciar dictado»]")
         else:
             imprimir("\n[GRABANDO... (voz) Di «fin del dictado» para terminar]")
-        try:
-            _mostrar_indicador()
-        except Exception as e:
-            imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+        # El indicador lo pinta el bucle principal, nunca quien llama aquí:
+        # este camino puede venir del hilo de audio (2026-11-19).
+        self._cola_eventos.put("indicador_on")
         reproducir_sonido("inicio")
         if self._escucha is not None:
             self._escucha.reiniciar()
@@ -1688,10 +1833,7 @@ class ClienteVoz:
             self._escucha.cierre_detectado if self._escucha is not None else ""
         )
         self._orden_pendiente = None
-        try:
-            _ocultar_indicador()
-        except Exception as e:
-            imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
+        self._cola_eventos.put("indicador_off")
         imprimir(f"[DETENIDO ({motivo}). Procesando...]")
         # Confirmación inmediata de que se oyó el cierre: el texto todavía tiene
         # que transcribirse en el servidor (2-10 s), así que este pitido dice
@@ -2091,6 +2233,11 @@ class ClienteVoz:
         return key in self._teclas_simples or key in self._teclas_escribir_simples
 
     def _on_press(self, key):
+        # Corre dentro del gancho de teclado del sistema: aquí solo se marca
+        # estado y se encolan eventos. Pintar la ventana del indicador desde
+        # aquí bloquea el gancho (Tk puede tardar segundos) y en Windows el
+        # sistema lo desengancha: la tecla deja de llegar (2026-11-19).
+        self._teclas_vistas += 1
         # Mantener registro de teclas presionadas
         self._teclas_presionadas.add(key)
         if key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
@@ -2125,13 +2272,14 @@ class ClienteVoz:
             self._alternar_grabacion(modo)
         else:
             if not self._grabando:
+                # En modo «mantener» la tecla tampoco puede saltarse la cuenta
+                # (el «toggle» ya la comprueba en `_alternar_grabacion`).
+                if not self._cuenta_lista():
+                    return
                 self._grabando = True
                 self._tecla_suelta = False
                 imprimir("\n[GRABANDO... Mantén presionada la tecla activadora]")
-                try:
-                    _mostrar_indicador()
-                except Exception as e:
-                    imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+                self._cola_eventos.put("indicador_on")
                 self._cola_eventos.put("start")
 
     def _on_release(self, key):
@@ -2153,11 +2301,8 @@ class ClienteVoz:
         if es_relevante and self._grabando:
             self._grabando = False
             self._tecla_suelta = True
-            try:
-                _ocultar_indicador()
-            except Exception as e:
-                imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
             imprimir("[DETENIDO. Procesando...]")
+            self._cola_eventos.put("indicador_off")
             self._cola_eventos.put("stop")
 
     # --- Procesar mensajes del servidor ---
@@ -2200,6 +2345,32 @@ class ClienteVoz:
             imprimir(f"[TEXTO] Copiado al portapapeles: «{texto}»")
         reproducir_sonido("texto")
 
+    def _autenticar(self):
+        """Manda al servidor el token de la cuenta (si hay sesión).
+
+        Se envía al conectar, cuando cambia la sesión (entrar o salir desde la
+        ventana) y **cada 60 s** de recordatorio: al reiniciarse el servidor de
+        dictado se pierde su estado de autenticación por cliente y, con la
+        exigencia de cuenta activada, el cliente dejaría de dictar en silencio.
+        """
+        token = sesion.token() or ""
+        momento = time.time()
+        cambio = token != getattr(self, "_token_enviado", "")
+        if not cambio and momento - getattr(self, "_auth_momento", 0.0) < 60:
+            return
+        self._token_enviado = token
+        self._auth_momento = momento
+        if not token:
+            if cambio:
+                imprimir("[SERVIDOR] Sin sesión: no hay token que presentar.")
+            return
+        try:
+            self._enviar(crear_auth(token))
+            if cambio:
+                imprimir("[SERVIDOR] Enviada la autenticación de la cuenta.")
+        except Exception as e:
+            imprimir(f"[SERVIDOR] No se pudo enviar la autenticación: {e}")
+
     def _manejar_mensaje(self, frames):
         if len(frames) < 1:
             return
@@ -2211,6 +2382,20 @@ class ClienteVoz:
         if not self._servidor_confirmado:
             self._servidor_confirmado = True
             imprimir("[CLIENTE] ✓ Servidor responde. Conexión establecida.")
+
+        if tipo == AUTH_OK:
+            imprimir("[SERVIDOR] Cuenta validada: el servidor acepta el dictado.")
+            return
+
+        if tipo == AUTH_FAIL:
+            motivo = (
+                frames[1].decode("utf-8", "replace") if len(frames) > 1 else ""
+            )
+            imprimir(
+                f"[SERVIDOR] ⚠ El servidor rechazó la autenticación: {motivo}. "
+                "Sin una cuenta válida no se transcribe nada."
+            )
+            return
 
         if tipo == TEXTO:
             self._esperando_transcripcion = False
@@ -2261,29 +2446,24 @@ class ClienteVoz:
     def ejecutar(self):
         self._socket.connect(self._direccion)
         imprimir(f"[CLIENTE] Conectado a {self._direccion}")
+        # Si hay sesión, se saluda con su token: el servidor puede exigir
+        # cuenta para transcribir (DICTADO_EXIGIR_CUENTA).
+        self._autenticar()
+
+        # ¿Por dónde va el audio? Puente HTTPS (funciona desde cualquier red) o
+        # ZMQ (solo en la red del servidor). Ver `_elegir_transporte`.
+        self._transporte = self._elegir_transporte()
 
         # Guardar PID para control externo (señales / CLI)
         self._guardar_pid()
 
-        # Configurar señales POSIX para control externo (Wayland / GNOME shortcuts)
-        if hasattr(signal, "SIGUSR1"):
-            signal.signal(signal.SIGUSR1, self._manejador_sigusr1)
-        if hasattr(signal, "SIGUSR2"):
-            signal.signal(signal.SIGUSR2, self._manejador_sigusr2)
-        # Interruptores del icono de la bandeja (señales de tiempo real).
-        if hasattr(signal, "SIGRTMIN"):
-            signal.signal(signal.SIGRTMIN + 1, self._manejador_escucha)
-            signal.signal(signal.SIGRTMIN + 2, self._manejador_comandos)
-            signal.signal(signal.SIGRTMIN + 3, self._manejador_recargar)
+        # Los manejadores de SIGUSR1/SIGUSR2 ya se instalaron en `__init__`:
+        # tienen que existir aunque la señal llegue durante el arranque.
 
         # Iniciar escucha de teclado ANTES que el audio: si el micrófono
         # falla, la activación por teclado debe seguir funcionando.
         try:
-            listener = keyboard.Listener(
-                on_press=self._on_press, on_release=self._on_release
-            )
-            listener.start()
-            imprimir("[CLIENTE] Escucha de teclado iniciada.")
+            self._crear_listener()
         except Exception as e:
             imprimir(f"[CLIENTE] No se pudo iniciar el listener de pynput: {e}")
 
@@ -2317,7 +2497,7 @@ class ClienteVoz:
         self._publicar_estado()
 
         # Verificar conectividad con el servidor (fire-and-forget)
-        self._socket.send_multipart(crear_ping())
+        self._enviar(crear_ping())
 
         poller = zmq.Poller()
         poller.register(self._socket, zmq.POLLIN)
@@ -2331,7 +2511,15 @@ class ClienteVoz:
                 self._enviar_audio()
 
                 # 2. Procesar eventos de teclado
+                self._atender_senal()
                 self._procesar_eventos()
+
+                # 2a. Gancho de teclado: si dejó de entregar teclas, se levanta
+                #     otra vez (en Windows el sistema lo desengancha solo).
+                self._vigilar_teclado()
+
+                # 2b. Entrar o salir de la cuenta cambia el transporte.
+                self._revisar_transporte()
 
                 # 2b. Cerrar el dictado de voz si se quedó sin voz o pasó el tope
                 self._vigilar_dictado_voz(time.time())
@@ -2416,8 +2604,11 @@ class ClienteVoz:
 
                 # 6. Ping periódico (cada 10 s)
                 if ahora - self._ultimo_ping > 10:
-                    self._socket.send_multipart(crear_ping())
+                    self._enviar(crear_ping())
                     self._ultimo_ping = ahora
+                    # Entrar o salir de la cuenta desde la ventana se aplica
+                    # aquí, sin reiniciar el cliente.
+                    self._autenticar()
 
         except KeyboardInterrupt:
             imprimir("[CLIENTE] Detenido por el usuario.")
@@ -2443,15 +2634,133 @@ class ClienteVoz:
                 except Exception:
                     pass
             try:
-                listener.stop()
+                if self._listener is not None:
+                    self._listener.stop()
             except Exception:
                 pass
+            self._listener = None
             try:
                 _ocultar_indicador()
             except Exception:
                 pass
             self._socket.close()
             self._ctx.term()
+
+    def _enviar(self, frames):
+        """Envía al servidor **sin bloquear jamás**.
+
+        Con el servidor caído o inalcanzable, el búfer del socket se llena y
+        `send_multipart` se queda esperando indefinidamente: el bucle principal
+        dejaba de latir y el cliente había que cerrarlo a la fuerza (2026-11-19).
+        Mejor perder audio y avisar que quedarse mudo.
+        """
+        try:
+            self._socket.send_multipart(frames, flags=zmq.NOBLOCK)
+        except zmq.Again:
+            if not self._audio_sin_servidor:
+                self._audio_sin_servidor = True
+                imprimir(
+                    "[SERVIDOR] ⚠ Sin conexión: se descarta el audio para no "
+                    "bloquear el cliente. Revisa la dirección del servidor "
+                    f"({self._direccion})."
+                )
+                try:
+                    reproducir_sonido("error")
+                except Exception:
+                    pass
+            return False
+        if self._audio_sin_servidor:
+            self._audio_sin_servidor = False
+            imprimir("[SERVIDOR] Conexión recuperada: se vuelve a enviar el audio.")
+        return True
+
+    # --- Transporte del audio: puente HTTPS o ZMQ -------------------------
+
+    def _elegir_transporte(self):
+        """Decide por dónde va el audio: `puente` (HTTPS) o `zmq` (red local).
+
+        El puente es el único camino publicado en internet (el 5555 no está
+        abierto), así que con sesión y puente disponible se usa siempre. ZMQ
+        queda para cuando no hay sesión o el puente no responde (por ejemplo,
+        el servidor de dictado local sin puente levantado).
+        """
+        modo = str(self._config_cuenta.get("transporte") or "auto").strip().lower()
+        if modo == "zmq":
+            imprimir("[TRANSPORTE] ZMQ (forzado en la configuración).")
+            return "zmq"
+        if not sesion.hay_sesion():
+            imprimir(
+                "[TRANSPORTE] Sin sesión: se usa ZMQ (el puente exige cuenta)."
+            )
+            return "zmq"
+        if puente_dictado.disponible(self._config_cuenta):
+            imprimir(
+                "[TRANSPORTE] Puente HTTPS "
+                f"({self._config_cuenta.get('puente')}): se dicta desde cualquier red."
+            )
+            return "puente"
+        imprimir(
+            "[TRANSPORTE] El puente no responde; se usa ZMQ "
+            f"({self._direccion})."
+        )
+        return "zmq"
+
+    def _revisar_transporte(self):
+        """Vuelve a elegir el transporte si la sesión cambió.
+
+        Entrar con la cuenta desde la ventana (o cerrar sesión) no reinicia el
+        cliente: sin esto se seguía dictando por ZMQ hasta reiniciar, cuando lo
+        normal es pasar al puente en cuanto hay cuenta.
+        """
+        token = sesion.token()
+        if token == self._token_transporte:
+            return
+        self._token_transporte = token
+        nuevo = self._elegir_transporte()
+        if nuevo != self._transporte:
+            self._transporte = nuevo
+            self._pcm_puente = bytearray()
+            imprimir(f"[TRANSPORTE] Cambiado a {nuevo}.")
+
+    def _acumular_puente(self, chunk):
+        """Guarda el trozo para mandarlo al puente al cerrar el dictado."""
+        self._pcm_puente.extend(chunk.tobytes())
+        if (
+            len(self._pcm_puente) > puente_dictado.BYTES_MAXIMOS
+            and not self._aviso_largo
+        ):
+            self._aviso_largo = True
+            imprimir(
+                "[PUENTE] ⚠ El dictado pasa de "
+                f"{puente_dictado.SEGUNDOS_MAXIMOS} s: se envía solo hasta ahí."
+            )
+
+    def _lanzar_transcripcion_puente(self):
+        """Manda lo acumulado al puente en una hebra (no bloquea el bucle)."""
+        pcm = bytes(self._pcm_puente)
+        self._pcm_puente = bytearray()
+        self._aviso_largo = False
+        if self._puente_ocupado:
+            imprimir("[PUENTE] Ya hay un dictado en curso; este se descarta.")
+            return
+        if not pcm:
+            imprimir("[PUENTE] No hay audio que enviar.")
+            return
+        self._puente_ocupado = True
+        segundos = len(pcm) / (puente_dictado.FRECUENCIA * 2)
+        imprimir(f"[PUENTE] Enviando {segundos:.1f} s de audio por HTTPS...")
+        threading.Thread(
+            target=self._transcribir_puente, args=(pcm,), daemon=True
+        ).start()
+
+    def _transcribir_puente(self, pcm):
+        """Hebra: POST al puente y el resultado a la cola de eventos."""
+        try:
+            texto, error = puente_dictado.transcribir(self._config_cuenta, pcm)
+        except Exception as e:  # nunca puede tumbar la hebra
+            texto, error = "", f"fallo al dictar por el puente: {e}"
+        self._puente_ocupado = False
+        self._cola_eventos.put(("puente_texto", texto, error))
 
     def _enviar_audio(self):
         """Envía chunks de audio acumulados al servidor.
@@ -2464,23 +2773,104 @@ class ClienteVoz:
         while enviados < 20:  # Máximo 20 chunks por iteración (~1.3 s de audio)
             try:
                 chunk = self._cola_audio.get_nowait()
-                if self._dictado_voz and not self._dictado_enviado:
+                if self._transporte == "puente":
+                    # Al puente se le manda el audio completo al cerrar, y solo
+                    # el del dictado: el micrófono se captura siempre (para la
+                    # palabra clave) y acumular todo llenaba el tope de 55 s
+                    # antes de empezar a dictar (visto el 2026-11-19).
+                    if self._dictado_voz and not self._dictado_enviado:
+                        self._buffer_voz.append(chunk)
+                    elif self._grabando:
+                        self._acumular_puente(chunk)
+                elif self._dictado_voz and not self._dictado_enviado:
                     # Fase de decisión: se guarda en memoria para no mandar al
                     # servidor el audio de una orden que se ejecutará aquí.
                     self._buffer_voz.append(chunk)
                 else:
-                    self._socket.send_multipart(crear_audio(chunk))
+                    self._enviar(crear_audio(chunk))
                 self._alimentar_escucha(chunk)
                 enviados += 1
             except queue.Empty:
                 break
+
+    # --- Gancho de teclado -------------------------------------------------
+
+    def _crear_listener(self):
+        """Crea (o recrea) el gancho global de teclado.
+
+        Se guarda en `self._listener` para vigilarlo: un gancho de bajo nivel
+        deja de entregar teclas si el sistema lo desengancha, y sin vigilancia
+        el cliente se queda sordo sin una sola línea en el registro.
+        """
+        anterior = self._listener
+        if anterior is not None:
+            try:
+                anterior.stop()
+            except Exception:
+                pass
+        self._listener = keyboard.Listener(
+            on_press=self._on_press, on_release=self._on_release
+        )
+        self._listener.start()
+        imprimir("[CLIENTE] Escucha de teclado iniciada.")
+
+    def _vigilar_teclado(self):
+        """Revisa el gancho cada 5 s y lo vuelve a levantar si se cayó."""
+        ahora = time.time()
+        if ahora - self._ultimo_chequeo_teclas < 5:
+            return
+        self._ultimo_chequeo_teclas = ahora
+        if not (self._listener is not None and self._listener.running):
+            imprimir(
+                "[TECLA] ⚠ La escucha de teclado se cayó; se vuelve a levantar."
+            )
+            try:
+                reproducir_sonido("error")
+            except Exception:
+                pass
+            try:
+                self._crear_listener()
+            except Exception as e:
+                imprimir(f"[TECLA] No se pudo levantar la escucha: {e}")
+            return
+        if ahora - self._ultimo_latido_teclas >= 300:
+            self._ultimo_latido_teclas = ahora
+            imprimir(
+                f"[TECLA] Escucha viva; {self._teclas_vistas} pulsaciones "
+                "desde que arrancó el cliente."
+            )
+
+    def reiniciar_escucha_teclado(self):
+        """Vuelve a levantar el gancho (menú del icono / atajo externo)."""
+        imprimir("[TECLA] Reinicio de la escucha pedido desde el icono.")
+        try:
+            self._crear_listener()
+        except Exception as e:
+            imprimir(f"[TECLA] No se pudo reiniciar la escucha: {e}")
+            try:
+                reproducir_sonido("error")
+            except Exception:
+                pass
+        self._publicar_estado()
 
     def _procesar_eventos(self):
         """Procesa eventos de teclado encolados."""
         while True:
             try:
                 evento = self._cola_eventos.get_nowait()
-                if evento == "toggle_normal":
+                if evento == "indicador_on":
+                    # Lo pidió el gancho de teclado o el hilo de audio: Tk se
+                    # toca aquí, en el bucle principal (2026-11-19).
+                    try:
+                        _mostrar_indicador()
+                    except Exception as e:
+                        imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+                elif evento == "indicador_off":
+                    try:
+                        _ocultar_indicador()
+                    except Exception as e:
+                        imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
+                elif evento == "toggle_normal":
                     self._alternar_grabacion("normal")
                 elif evento == "toggle_escribir":
                     self._alternar_grabacion("escribir")
@@ -2490,36 +2880,79 @@ class ClienteVoz:
                     self._alternar_comandos()
                 elif evento == "recargar":
                     self._recargar_configuracion()
+                elif evento == "reiniciar_teclado":
+                    self.reiniciar_escucha_teclado()
                 elif evento == "start":
-                    if self._escribir_este_dictado:
+                    if self._transporte == "puente":
+                        # Se acumula el audio y se manda al cerrar.
+                        self._pcm_puente = bytearray()
+                        self._aviso_largo = False
+                        imprimir("[CLIENTE] Dictado por HTTPS (puente).")
+                    elif self._escribir_este_dictado:
                         # Dictado en vivo: el servidor manda el texto por frases
                         imprimir("[CLIENTE] Enviando DICTADO_START en vivo al servidor...")
-                        self._socket.send_multipart(crear_dictado_start_vivo())
+                        self._enviar(crear_dictado_start_vivo())
                     else:
                         imprimir("[CLIENTE] Enviando DICTADO_START al servidor...")
-                        self._socket.send_multipart(crear_dictado_start())
+                        self._enviar(crear_dictado_start())
                 elif evento == "start_voz":
                     # La palabra clave la oyó este cliente: el servidor marca.
                     # Sin `fin`: la frase de cierre la recorta el propio cliente.
-                    imprimir("[CLIENTE] Enviando DICTADO_START de voz al servidor...")
-                    self._socket.send_multipart(crear_dictado_start_voz(fin=False))
-                    # Lo guardado mientras se decidía si era orden o texto. Va
-                    # DESPUÉS del START: antes, el servidor lo descartaría.
-                    if self._buffer_voz:
-                        imprimir(
-                            f"[CLIENTE] Enviando {len(self._buffer_voz)} trozos "
-                            "guardados."
-                        )
-                        for trozo in self._buffer_voz:
-                            self._socket.send_multipart(crear_audio(trozo))
+                    if self._transporte == "puente":
+                        self._pcm_puente = bytearray(b"".join(self._buffer_voz))
                         self._buffer_voz = []
-                    # A partir de aquí el audio va directo al socket.
-                    self._dictado_enviado = True
+                        self._aviso_largo = False
+                        self._dictado_enviado = True
+                        imprimir("[CLIENTE] Dictado por HTTPS (voz).")
+                    else:
+                        imprimir("[CLIENTE] Enviando DICTADO_START de voz al servidor...")
+                        self._enviar(crear_dictado_start_voz(fin=False))
+                        # Lo guardado mientras se decidía si era orden o texto. Va
+                        # DESPUÉS del START: antes, el servidor lo descartaría.
+                        if self._buffer_voz:
+                            imprimir(
+                                f"[CLIENTE] Enviando {len(self._buffer_voz)} trozos "
+                                "guardados."
+                            )
+                            for trozo in self._buffer_voz:
+                                self._enviar(crear_audio(trozo))
+                            self._buffer_voz = []
+                        # A partir de aquí el audio va directo al socket.
+                        self._dictado_enviado = True
                 elif evento == "stop":
-                    imprimir("[CLIENTE] Enviando DICTADO_STOP al servidor. Esperando transcripción...")
-                    self._socket.send_multipart(crear_dictado_stop())
-                    self._esperando_transcripcion = True
-                    self._transcripcion_inicio = time.time()
+                    if self._transporte == "puente":
+                        self._lanzar_transcripcion_puente()
+                    else:
+                        imprimir("[CLIENTE] Enviando DICTADO_STOP al servidor. Esperando transcripción...")
+                        # Si el envío no cupo (servidor caído), no se espera una
+                        # transcripción que nunca va a llegar.
+                        if self._enviar(crear_dictado_stop()):
+                            self._esperando_transcripcion = True
+                            self._transcripcion_inicio = time.time()
+                elif isinstance(evento, tuple) and evento[:1] == ("puente_texto",):
+                    # Resultado de la hebra que habló con el puente: aquí ya se
+                    # puede tocar el portapapeles, sonar y hablar.
+                    _, texto, error = evento
+                    self._esperando_transcripcion = False
+                    if error:
+                        imprimir(f"[PUENTE] {error}")
+                        esperando = self._esperando
+                        self._esperando = None
+                        if esperando in ("orden", "consulta"):
+                            reproducir_sonido("error")
+                        else:
+                            _avisar_usuario("Dictado por HTTPS", error)
+                            reproducir_sonido("error")
+                    else:
+                        imprimir(f"Texto detectado: {texto}")
+                        if self._esperando == "orden":
+                            self._esperando = None
+                            self._orden_corregida(texto)
+                        elif self._esperando == "consulta":
+                            self._esperando = None
+                            self._responder_consulta(texto)
+                        else:
+                            self._entregar_texto(texto)
             except queue.Empty:
                 break
 
@@ -2721,6 +3154,11 @@ if __name__ == "__main__":
     if "--ventana" in args:
         from ventana_configuracion import main as _main_ventana
         sys.exit(_main_ventana())
+    if "--indicador" in args:
+        # Ventana flotante «REC» en su propio proceso: el cliente nunca crea
+        # Tkinter dentro de sí mismo (2026-11-19).
+        from indicador_grabacion import main as _main_indicador
+        sys.exit(_main_indicador())
 
     # Alternancia rápida por CLI (Wayland / GNOME shortcuts)
     if "--toggle" in args or "--toggle-escribir" in args:
@@ -2733,6 +3171,20 @@ if __name__ == "__main__":
 
     rotar_logs_al_iniciar()
     imprimir("=== CLIENTE DE SKIPKEY ===")
+
+    # Sin sesión gráfica no hay ni icono ni teclado ni portapapeles: mejor
+    # decirlo que reventar con un KeyError de pyautogui.
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        mensaje = (
+            "SkipKey necesita una sesión gráfica (DISPLAY o WAYLAND_DISPLAY).\n"
+            "Si lo lanzas por SSH o desde una terminal sin escritorio no va a "
+            "funcionar: ábrelo desde el propio escritorio."
+        )
+        print(mensaje, file=sys.stderr)
+        imprimir(f"[ERROR] {mensaje.replace(chr(10), ' ')}")
+        sys.exit(1)
+
+    _revisar_dependencias()
 
     # Modos de instalación del cliente dedicado (Windows)
     if "--instalar" in args:
@@ -2754,8 +3206,12 @@ if __name__ == "__main__":
         _probar_microfono(segundos)
         sys.exit(0)
 
-    _asegurar_config()
+    primera_vez = _asegurar_config()
+    if primera_vez:
+        _avisar_primer_arranque()
 
+    # Dirección del servidor: --servidor IP:PUERTO > DICTADO_SERVIDOR >
+    # campo "servidor" del JSON > 127.0.0.1:5555.
     direccion = None
     for i, arg in enumerate(args):
         if arg == "--servidor" and i + 1 < len(args):

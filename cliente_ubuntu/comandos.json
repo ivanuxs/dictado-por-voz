@@ -12,7 +12,9 @@
   "modo_activacion": "toggle",
   "modo_escucha": true,
   "bandeja": true,
-  "puente": "http://127.0.0.1:8000",
+  "servidor": "192.168.1.2:5555",
+  "transporte": "auto",
+  "puente": "https://dictado.hlquantlabs.trade",
   "puente_clave": "",
   "clave": "computadora",
   "frase_fin": [

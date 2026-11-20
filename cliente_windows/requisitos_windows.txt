@@ -17,7 +17,8 @@ pygame
 pystray
 Pillow
 # Detección local de la palabra clave y de las órdenes (escucha_local.py).
-# El modelo `base` (~142 MB) va dentro del ejecutable.
+# El paquete va dentro del ejecutable, pero el modelo `base` (~142 MB) no: se
+# descarga a ~/.cache/huggingface la primera vez que se usa la escucha.
 faster-whisper
 
 # Herramienta para generar el producto final (ClienteVoz.exe)

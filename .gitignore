@@ -50,6 +50,15 @@ dist/
 *.key
 puente-web.env
 
+# Clave del proxy incrustada al compilar (la generan
+# cliente_ubuntu/empaquetado/compilar_en_contenedor.sh y
+# cliente_windows/preparar_clave.py desde clave_proxy.txt o
+# DICTADO_PUENTE_CLAVE).
+clave_proxy_compilada.py
+# Clave del proxy en texto, para que viaje con la carpeta a la PC Windows
+# (la lee construir_exe_windows.bat y también el cliente en ejecución).
+clave_proxy.txt
+
 # ─────────────────────────────────────────────────────────────
 # Compilación del cliente Android
 # ─────────────────────────────────────────────────────────────
@@ -84,6 +93,9 @@ cliente_windows/build/
 cliente_windows/dist/
 *.exe
 *.deb
+
+# Instalador de Windows generado con Inno Setup.
+cliente_windows/instalador/salida/
 
 # Carpetas de trabajo y respaldos de código retirado.
 scratch/

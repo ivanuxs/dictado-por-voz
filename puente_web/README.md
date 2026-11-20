@@ -211,7 +211,7 @@ los ajustes se guardan con cualquier plan.
   funcionaba deja de funcionar.
 - `planes.py` es la única autoridad. **Tres planes**: Gratis (motor del celular), Básico (30 min y 50
   traducciones al día. Pro: **sin tope diario** (minutos y traducciones ilimitados;
-  `null` en el JSON), dictado en vivo y 3 dispositivos. Lo que acota el abuso no es el
+  `null` en el JSON), dictado en vivo y 5 dispositivos. Lo que acota el abuso no es el
   cupo sino la cola: una transcripción y una traducción a la vez, y 60 s por petición.
   El uso se cuenta por día (UTC) en la tabla `uso` y se responde **429** al agotarse.
 - **Correo** (opcional): `DICTADO_SMTP_*` sirve para Gmail con contraseña de aplicación
@@ -258,7 +258,7 @@ Medido con este equipo (2026-10-05), sobre un dictado real de 6,4 s:
 | `DICTADO_TIMEOUT` | `120` | Espera máxima a la transcripción. |
 | `DICTADO_PUENTE_HOST` / `PUERTO` | `0.0.0.0` / `8000` | Escucha. |
 | `DICTADO_ZMQ` | `tcp://127.0.0.1:5555` | Servidor de dictado. |
-| `DICTADO_ZMQ_TOKEN` | vacío | Solo si el servidor tiene `DICTADO_TOKEN`. |
+| `DICTADO_ZMQ_TOKEN` | vacío | Token interno del servidor de dictado (su `DICTADO_TOKEN`). Hace falta cuando el servidor exige autenticación (`DICTADO_EXIGIR_CUENTA` o su `DICTADO_TOKEN`). |
 
 La transcripción es **siempre de una en una** (un modelo, un candado): lo que
 hace la cola es limitar cuántas peticiones esperan, para que un abuso con el
@@ -322,6 +322,30 @@ Firewall del portátil (una sola vez, necesita `sudo`):
 ```bash
 sudo ufw allow from 192.168.1.100 to any port 8000 proto tcp
 ```
+
+### Rotar la clave del proxy
+
+La clave (`X-Clave-Cliente`) es un secreto **del despliegue**, no del usuario: el
+usuario final nunca la escribe. Los clientes la llevan incrustada al compilar,
+igual que el APK. Si se filtra, se cambia en este orden:
+
+```bash
+# 1. Clave nueva
+openssl rand -hex 32
+
+# 2. nginx: cambiarla en el map de /etc/nginx/conf.d/dictado-http.conf
+sudo nginx -t && sudo systemctl reload nginx      # hasta aquí, todo da 403
+
+# 3. Clientes: APK y escritorio se recompilan con la clave nueva
+#    (cliente_android/local.properties: dictadoClave=… y el archivo
+#     clave_proxy.txt que leen los scripts de compilación del escritorio)
+#    También se puede dejar clave_proxy.txt junto al .exe ya instalado:
+#    el cliente la lee al arrancar, sin recompilar.
+```
+
+Mientras dura la rotación los clientes viejos reciben **403** (el escritorio lo
+traduce a «a este cliente le falta la clave del proxy»). Por eso conviene rotarla
+solo si hace falta de verdad.
 
 Avisos:
 

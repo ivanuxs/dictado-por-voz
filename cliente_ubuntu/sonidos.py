@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import wave
 
 FRECUENCIA_MUESTREO = 44100
@@ -112,12 +113,22 @@ def _obtener_wav(nombre):
 
 
 def reproducir_sonido(nombre):
-    """Reproduce un sonido: 'alarma', 'inicio', 'fin', 'texto', 'orden' o 'error'.
+    """Reproduce un sonido sin bloquear a quien llama.
 
-    Windows: winsound. Linux: paplay.
+    El pitido va en su propio hilo y con tiempo límite: `paplay` puede quedarse
+    esperando al servidor de audio (PipeWire/PulseAudio atascado, sin tarjeta) y
+    antes bloqueaba el hilo que lo llamaba —incluso el gancho de teclado, que en
+    Windows se desengancha si un callback tarda (2026-11-19).
     """
     if nombre not in _GENERADORES:
         return
+    threading.Thread(
+        target=_reproducir_ahora, args=(nombre,), daemon=True
+    ).start()
+
+
+def _reproducir_ahora(nombre):
+    """Trabajo real del pitido (se ejecuta en un hilo aparte)."""
     try:
         ruta = _obtener_wav(nombre)
         if sys.platform == "win32":
@@ -128,6 +139,7 @@ def reproducir_sonido(nombre):
                 ["paplay", ruta],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                timeout=10,
             )
     except Exception:
         pass

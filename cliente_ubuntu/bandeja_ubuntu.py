@@ -54,6 +54,22 @@ def _congelado():
     return bool(getattr(sys, "frozen", False) or "__compiled__" in globals())
 
 
+def _ruta_programa():
+    """Ruta del binario real, también dentro del paquete.
+
+    En Nuitka standalone `sys.executable` vale `…/python`, que **no existe** en
+    el paquete: lanzar la ventana con él fallaba con «No such file or
+    directory» (2026-11-19). El binario de verdad es `sys.argv[0]`.
+    """
+    for candidato in (sys.argv[0], sys.executable):
+        if not candidato:
+            continue
+        ruta = os.path.realpath(candidato)
+        if os.path.isfile(ruta) and os.access(ruta, os.X_OK):
+            return ruta
+    return sys.executable
+
+
 def _directorio_programa():
     """Carpeta del programa: la del ejecutable o la de este script."""
     if _congelado():
@@ -177,6 +193,11 @@ class Bandeja:
         self._items["configuracion"] = self._item(
             menu, "Configuración…", self._abrir_configuracion
         )
+        # Un gancho de teclado puede quedarse sin entregar teclas; el cliente
+        # lo vigila solo y aquí está el botón para forzarlo (2026-11-19).
+        self._items["teclado"] = self._item(
+            menu, "Reiniciar escucha de teclas", self._reiniciar_teclado
+        )
         self._items["registro"] = self._item(
             menu, "Ver registro", self._ver_registro
         )
@@ -222,6 +243,10 @@ class Bandeja:
         if not self._actualizando:
             _senal("enviar_comandos")
 
+    def _reiniciar_teclado(self):
+        """Vuelve a enganchar el teclado global (por si dejó de responder)."""
+        _senal("enviar_teclado")
+
     def _dictar(self):
         _senal("enviar_toggle", "normal")
 
@@ -235,7 +260,9 @@ class Bandeja:
         """
         json_ruta = _ruta_config()
         if _congelado():
-            comando = [sys.executable, "--ventana", "--json", json_ruta]
+            # `sys.executable` es `…/python` en Nuitka standalone y no existe;
+            # el binario real es `sys.argv[0]` (2026-11-19).
+            comando = [_ruta_programa(), "--ventana", "--json", json_ruta]
         else:
             ventana = os.path.join(_directorio_programa(), "ventana_configuracion.py")
             python = PYTHON_ENTORNO or sys.executable
@@ -325,7 +352,13 @@ def main():
         bandeja = Bandeja()
         bandeja.iniciar()
     except Exception as e:
-        print(f"[BANDEJA] no se pudo crear el icono: {e}", flush=True)
+        print(
+            f"[BANDEJA] no se pudo crear el icono: {e}\n"
+            "  Casi siempre falta una biblioteca del escritorio. Instala:\n"
+            "    sudo apt install libgtk-3-0 libayatana-appindicator3-1 "
+            "gir1.2-ayatanaappindicator3-0.1",
+            flush=True,
+        )
         return 1
     print("[BANDEJA] icono listo.", flush=True)
     bandeja._Gtk.main()

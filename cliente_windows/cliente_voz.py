@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from urllib.parse import quote_plus
 
@@ -25,8 +26,9 @@ from pynput import keyboard
 from protocolo import (
     AUDIO, DICTADO_START, DICTADO_STOP,
     TEXTO, TEXTO_PARCIAL, FIN_DICTADO, PING, PONG, ESTADO,
+    AUTH_OK, AUTH_FAIL,
     CHUNK_MUESTRAS,
-    crear_audio, crear_dictado_start, crear_dictado_start_vivo,
+    crear_audio, crear_auth, crear_dictado_start, crear_dictado_start_vivo,
     crear_dictado_start_voz, crear_dictado_stop, crear_ping,
     decodificar_texto,
 )
@@ -34,6 +36,7 @@ from marcas import aplicar_configuracion as aplicar_marcas
 from marcas import es_comando, parsear, resolver
 import marcas
 import perfil as perfil_cuenta
+import puente_dictado
 import sesion
 from diccionario_desktop import DiccionarioEscritorio
 
@@ -761,29 +764,22 @@ def _hablar_respuesta(texto):
 # ---------------------------------------------------------------------------
 
 def _mostrar_indicador():
-    global _indicador_proceso, _indicador_ventana
-    if getattr(sys, "frozen", False):
-        # Ejecutable empaquetado: no hay python separado → ventana en un hilo
-        if _indicador_ventana is None:
-            from indicador_grabacion import iniciar_indicador
-            _indicador_ventana = iniciar_indicador()
-    else:
-        if _indicador_proceso is None:
-            _indicador_proceso = subprocess.Popen(
-                [sys.executable, RUTA_INDICADOR],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+    global _indicador_proceso
+    if _indicador_proceso is not None:
+        return
+    # El indicador va en **otro proceso** con la bandera `--indicador`: Tk no
+    # se crea dentro del cliente. Crearlo en un hilo de este proceso congeló el
+    # cliente en Linux justo al empezar a dictar (2026-11-19); en Windows, ademá
+    # crearlo desde el gancho desenganchaba el teclado.
+    _indicador_proceso = subprocess.Popen(
+        [sys.executable, "--indicador"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _ocultar_indicador():
-    global _indicador_proceso, _indicador_ventana
-    if _indicador_ventana is not None:
-        try:
-            _indicador_ventana.detener()
-        except Exception:
-            pass
-        _indicador_ventana = None
+    global _indicador_proceso
     if _indicador_proceso is not None:
         try:
             _indicador_proceso.terminate()
@@ -794,7 +790,6 @@ def _ocultar_indicador():
 
 
 _indicador_proceso = None
-_indicador_ventana = None
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +801,13 @@ class ClienteVoz:
         self._direccion = direccion_servidor
         self._ctx = zmq.Context()
         self._socket = self._ctx.socket(zmq.DEALER)
+        # Sin servidor, un DEALER acumula mensajes hasta el HWM y entonces
+        # `send_multipart` se queda esperando para siempre: el cliente dejaba de
+        # responder y había que cerrarlo (2026-11-19). HWM bajo + envíos NOBLOCK:
+        # se pierde audio, no el cliente.
+        self._socket.setsockopt(zmq.LINGER, 0)
+        self._socket.setsockopt(zmq.SNDHWM, 300)
+        self._audio_sin_servidor = False
 
         # Cola para audio (desde callback de sounddevice → bucle ZMQ)
         self._cola_audio = queue.Queue(maxsize=200)
@@ -905,6 +907,30 @@ class ClienteVoz:
         # La ventana de configuración escribe comandos_windows.json; aquí se
         # vigila su fecha para releerlo sin reiniciar (Windows no tiene señales).
         self._mtime_config = self._mtime_json()
+        # Cómo terminó el bucle: el supervisor de `_bucle_cliente()` distingue
+        # un cierre pedido («Salir» del icono) de un fallo que hay que relanzar.
+        self._fallo = False
+        self._cierre_pedido = False
+
+        # --- Escucha de teclado (2026-11-19) ------------------------------
+        # Windows desengancha los ganchos de bajo nivel en cuanto el callback
+        # tarda unos cientos de milisegundos, y entonces el cliente se queda
+        # sordo **sin decir nada** (pasó en la PC de las 14:21: 14 minutos sin
+        # una sola pulsación en el registro y el proceso vivo). Se guarda el
+        # listener para vigilarlo cada pocos segundos y se levanta de nuevo si
+        # se cayó. Además, el callback ya no toca Tkinter (ver `_on_press`).
+        self._listener = None
+        self._teclas_vistas = 0
+        self._ultimo_chequeo_teclas = 0.0
+        self._ultimo_latido_teclas = time.time()
+
+        # Transporte del audio (2026-11-19): "puente" (HTTPS, cualquier red) o
+        # "zmq" (solo la red del servidor). Ver `_elegir_transporte`.
+        self._transporte = "zmq"
+        self._token_transporte = sesion.token()
+        self._pcm_puente = bytearray()
+        self._puente_ocupado = False
+        self._aviso_largo = False
 
     def _mtime_json(self):
         """Fecha de modificación del JSON (0.0 si no se puede leer)."""
@@ -912,6 +938,71 @@ class ClienteVoz:
             return os.path.getmtime(RUTA_JSON)
         except Exception:
             return 0.0
+
+    # --- Gancho de teclado -------------------------------------------------
+
+    def _crear_listener(self):
+        """Crea (o recrea) el gancho global de teclado.
+
+        Se guarda en `self._listener` para poder vigilarlo: en Windows el gancho
+        de bajo nivel se desengancha cuando el sistema deja de llamarlo a tiempo
+        o al bloquear la sesión, y entonces deja de llegar cualquier tecla.
+        """
+        anterior = self._listener
+        if anterior is not None:
+            try:
+                anterior.stop()
+            except Exception:
+                pass
+        self._listener = keyboard.Listener(
+            on_press=self._on_press, on_release=self._on_release
+        )
+        self._listener.start()
+        imprimir("[CLIENTE] Escucha de teclado iniciada.")
+
+    def _vigilar_teclado(self):
+        """Revisa el gancho cada 5 s y lo vuelve a levantar si se cayó.
+
+        Deja un latido cada 5 min con las pulsaciones vistas: si alguna vez
+        vuelve a quedarse sordo, el registro lo dice en vez de quedarse mudo.
+        """
+        ahora = time.time()
+        if ahora - self._ultimo_chequeo_teclas < 5:
+            return
+        self._ultimo_chequeo_teclas = ahora
+        if not (self._listener is not None and self._listener.running):
+            imprimir(
+                "[TECLA] ⚠ La escucha de teclado se cayó (Windows desengancha "
+                "los ganchos que tardan). Se vuelve a levantar."
+            )
+            try:
+                reproducir_sonido("error")
+            except Exception:
+                pass
+            try:
+                self._crear_listener()
+            except Exception as e:
+                imprimir(f"[TECLA] No se pudo levantar la escucha: {e}")
+            return
+        if ahora - self._ultimo_latido_teclas >= 300:
+            self._ultimo_latido_teclas = ahora
+            imprimir(
+                f"[TECLA] Escucha viva; {self._teclas_vistas} pulsaciones "
+                "desde que arrancó el cliente."
+            )
+
+    def reiniciar_escucha_teclado(self):
+        """Vuelve a levantar el gancho (menú del icono)."""
+        imprimir("[TECLA] Reinicio de la escucha pedido desde el icono.")
+        try:
+            self._crear_listener()
+        except Exception as e:
+            imprimir(f"[TECLA] No se pudo reiniciar la escucha: {e}")
+            try:
+                reproducir_sonido("error")
+            except Exception:
+                pass
+        self._actualizar_bandeja()
 
     def _vigilar_configuracion(self):
         """Recarga la configuración si la ventana la guardó mientras corre."""
@@ -1060,6 +1151,13 @@ class ClienteVoz:
         return key in self._teclas_simples or key in self._teclas_escribir_simples
 
     def _on_press(self, key):
+        # Ojo: esto corre dentro del gancho de teclado del sistema. Todo lo que
+        # se haga aquí retrasa la entrega de teclas y, si pasa de unos cientos
+        # de milisegundos, Windows **desengancha el gancho** y la tecla deja de
+        # llegar hasta reiniciar el cliente. Por eso aquí solo se marca estado
+        # y se encolan eventos: la ventana del indicador la pinta el bucle
+        # principal (2026-11-19).
+        self._teclas_vistas += 1
         # Mantener registro de teclas presionadas
         self._teclas_presionadas.add(key)
         if key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
@@ -1092,32 +1190,31 @@ class ClienteVoz:
 
         if self._modo_activacion == "toggle":
             if not self._grabando:
+                # La cuenta se comprueba en TODOS los caminos que abren un
+                # dictado. Faltaba justo aquí: con la tecla activadora se
+                # dictaba sin sesión (2026-11-19).
+                if not self._cuenta_lista():
+                    return
                 self._grabando = True
                 self._tecla_suelta = False
                 imprimir("\n[GRABANDO... Pulsa de nuevo para detener]")
-                try:
-                    _mostrar_indicador()
-                except Exception as e:
-                    imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+                self._cola_eventos.put("indicador_on")
                 self._cola_eventos.put("start")
             else:
                 self._grabando = False
                 self._tecla_suelta = False
-                try:
-                    _ocultar_indicador()
-                except Exception as e:
-                    imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
                 imprimir("[DETENIDO. Procesando...]")
+                self._cola_eventos.put("indicador_off")
                 self._cola_eventos.put("stop")
         else:
             if not self._grabando:
+                # Igual que en «toggle»: sin cuenta no se empieza a grabar.
+                if not self._cuenta_lista():
+                    return
                 self._grabando = True
                 self._tecla_suelta = False
                 imprimir("\n[GRABANDO... Mantén presionada la tecla activadora]")
-                try:
-                    _mostrar_indicador()
-                except Exception as e:
-                    imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+                self._cola_eventos.put("indicador_on")
                 self._cola_eventos.put("start")
 
     def _on_release(self, key):
@@ -1139,11 +1236,8 @@ class ClienteVoz:
         if es_relevante and self._grabando:
             self._grabando = False
             self._tecla_suelta = True
-            try:
-                _ocultar_indicador()
-            except Exception as e:
-                imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
             imprimir("[DETENIDO. Procesando...]")
+            self._cola_eventos.put("indicador_off")
             self._cola_eventos.put("stop")
 
     # --- Procesar mensajes del servidor ---
@@ -1188,6 +1282,32 @@ class ClienteVoz:
             imprimir(f"[TEXTO] Copiado al portapapeles: «{texto}»")
         reproducir_sonido("texto")
 
+    def _autenticar(self):
+        """Manda al servidor el token de la cuenta (si hay sesión).
+
+        Se envía al conectar, cuando cambia la sesión (entrar o salir desde la
+        ventana) y **cada 60 s** de recordatorio: al reiniciarse el servidor de
+        dictado se pierde su estado de autenticación por cliente y, con la
+        exigencia de cuenta activada, el cliente dejaría de dictar en silencio.
+        """
+        token = sesion.token() or ""
+        momento = time.time()
+        cambio = token != getattr(self, "_token_enviado", "")
+        if not cambio and momento - getattr(self, "_auth_momento", 0.0) < 60:
+            return
+        self._token_enviado = token
+        self._auth_momento = momento
+        if not token:
+            if cambio:
+                imprimir("[SERVIDOR] Sin sesión: no hay token que presentar.")
+            return
+        try:
+            self._enviar(crear_auth(token))
+            if cambio:
+                imprimir("[SERVIDOR] Enviada la autenticación de la cuenta.")
+        except Exception as e:
+            imprimir(f"[SERVIDOR] No se pudo enviar la autenticación: {e}")
+
     def _manejar_mensaje(self, frames):
         if len(frames) < 1:
             return
@@ -1199,6 +1319,20 @@ class ClienteVoz:
         if not self._servidor_confirmado:
             self._servidor_confirmado = True
             imprimir("[CLIENTE] ✓ Servidor responde. Conexión establecida.")
+
+        if tipo == AUTH_OK:
+            imprimir("[SERVIDOR] Cuenta validada: el servidor acepta el dictado.")
+            return
+
+        if tipo == AUTH_FAIL:
+            motivo = (
+                frames[1].decode("utf-8", "replace") if len(frames) > 1 else ""
+            )
+            imprimir(
+                f"[SERVIDOR] ⚠ El servidor rechazó la autenticación: {motivo}. "
+                "Sin una cuenta válida no se transcribe nada."
+            )
+            return
 
         if tipo == TEXTO:
             self._esperando_transcripcion = False
@@ -1251,14 +1385,17 @@ class ClienteVoz:
     def ejecutar(self):
         self._socket.connect(self._direccion)
         imprimir(f"[CLIENTE] Conectado a {self._direccion}")
+        # Si hay sesión, se saluda con su token: el servidor puede exigir
+        # cuenta para transcribir (DICTADO_EXIGIR_CUENTA).
+        self._autenticar()
+
+        # ¿Por dónde va el audio? Puente HTTPS (cualquier red) o ZMQ (red del
+        # servidor). Ver `_elegir_transporte`.
+        self._transporte = self._elegir_transporte()
 
         # Iniciar escucha de teclado ANTES que el audio: si el micrófono
         # falla, la activación por teclado debe seguir funcionando.
-        listener = keyboard.Listener(
-            on_press=self._on_press, on_release=self._on_release
-        )
-        listener.start()
-        imprimir("[CLIENTE] Escucha de teclado iniciada.")
+        self._crear_listener()
 
         # Hebra que escribe en el cursor los textos dictados (en orden)
         threading.Thread(target=self._bucle_escritura, daemon=True).start()
@@ -1287,7 +1424,7 @@ class ClienteVoz:
             )
 
         # Verificar conectividad con el servidor (fire-and-forget)
-        self._socket.send_multipart(crear_ping())
+        self._enviar(crear_ping())
 
         poller = zmq.Poller()
         poller.register(self._socket, zmq.POLLIN)
@@ -1305,6 +1442,13 @@ class ClienteVoz:
 
                 # 2b. Releer la configuración si la ventana la guardó
                 self._vigilar_configuracion()
+
+                # 2c. Gancho de teclado: si Windows lo desenganchó, se levanta
+                #     de nuevo. Sin esto el cliente se queda sordo en silencio.
+                self._vigilar_teclado()
+
+                # 2d. Entrar o salir de la cuenta cambia el transporte.
+                self._revisar_transporte()
 
                 # 3. Recibir mensajes del servidor (sin bloquear)
                 socks = dict(poller.poll(timeout=50))
@@ -1386,11 +1530,21 @@ class ClienteVoz:
 
                 # 6. Ping periódico (cada 10 s)
                 if ahora - self._ultimo_ping > 10:
-                    self._socket.send_multipart(crear_ping())
+                    self._enviar(crear_ping())
                     self._ultimo_ping = ahora
+                    # Entrar o salir de la cuenta desde la ventana se aplica
+                    # aquí, sin reiniciar el cliente.
+                    self._autenticar()
 
         except KeyboardInterrupt:
             imprimir("[CLIENTE] Detenido por el usuario.")
+        except Exception as e:
+            # Un fallo no puede llevarse el cliente en silencio: el `.exe` se
+            # compila sin consola, así que sin esto no queda ni una línea (es
+            # lo que pasaba cuando «dejaba de funcionar solo», 2026-11-19).
+            self._fallo = True
+            imprimir(f"[CLIENTE] ⚠ Fallo en el bucle principal: {e}")
+            imprimir("[CLIENTE] " + traceback.format_exc().replace("\n", " | "))
         finally:
             self._activo = False
             self._apagar_escucha_local()
@@ -1406,9 +1560,11 @@ class ClienteVoz:
                 except Exception:
                     pass
             try:
-                listener.stop()
+                if self._listener is not None:
+                    self._listener.stop()
             except Exception:
                 pass
+            self._listener = None
             try:
                 _ocultar_indicador()
             except Exception:
@@ -1416,18 +1572,134 @@ class ClienteVoz:
             self._socket.close()
             self._ctx.term()
 
+    def _enviar(self, frames):
+        """Envía al servidor **sin bloquear jamás**.
+
+        Sin servidor, el búfer del DEALER se llena y `send_multipart` se queda
+        esperando para siempre: el cliente dejaba de responder y había que
+        cerrarlo (2026-11-19). Mejor perder audio y avisar que quedarse mudo.
+        """
+        try:
+            self._socket.send_multipart(frames, flags=zmq.NOBLOCK)
+        except zmq.Again:
+            if not self._audio_sin_servidor:
+                self._audio_sin_servidor = True
+                imprimir(
+                    "[SERVIDOR] ⚠ Sin conexión: se descarta el audio para no "
+                    "bloquear el cliente. Revisa la dirección del servidor "
+                    f"({self._direccion})."
+                )
+                try:
+                    reproducir_sonido("error")
+                except Exception:
+                    pass
+            return False
+        if self._audio_sin_servidor:
+            self._audio_sin_servidor = False
+            imprimir("[SERVIDOR] Conexión recuperada: se vuelve a enviar el audio.")
+        return True
+
+    # --- Transporte del audio: puente HTTPS o ZMQ -------------------------
+
+    def _elegir_transporte(self):
+        """Decide por dónde va el audio: `puente` (HTTPS) o `zmq` (red local).
+
+        El puente es el único camino publicado en internet (el 5555 no está
+        abierto), así que con sesión y puente disponible se usa siempre; ZMQ
+        queda para cuando no hay sesión o el puente no responde.
+        """
+        modo = str(self._config_cuenta.get("transporte") or "auto").strip().lower()
+        if modo == "zmq":
+            imprimir("[TRANSPORTE] ZMQ (forzado en la configuración).")
+            return "zmq"
+        if not sesion.hay_sesion():
+            imprimir(
+                "[TRANSPORTE] Sin sesión: se usa ZMQ (el puente exige cuenta)."
+            )
+            return "zmq"
+        if puente_dictado.disponible(self._config_cuenta):
+            imprimir(
+                "[TRANSPORTE] Puente HTTPS "
+                f"({self._config_cuenta.get('puente')}): se dicta desde cualquier red."
+            )
+            return "puente"
+        imprimir(
+            "[TRANSPORTE] El puente no responde; se usa ZMQ "
+            f"({self._direccion})."
+        )
+        return "zmq"
+
+    def _revisar_transporte(self):
+        """Vuelve a elegir el transporte si la sesión cambió (entrar/salir)."""
+        token = sesion.token()
+        if token == self._token_transporte:
+            return
+        self._token_transporte = token
+        nuevo = self._elegir_transporte()
+        if nuevo != self._transporte:
+            self._transporte = nuevo
+            self._pcm_puente = bytearray()
+            imprimir(f"[TRANSPORTE] Cambiado a {nuevo}.")
+
+    def _acumular_puente(self, chunk):
+        """Guarda el trozo para mandarlo al puente al cerrar el dictado."""
+        self._pcm_puente.extend(chunk.tobytes())
+        if (
+            len(self._pcm_puente) > puente_dictado.BYTES_MAXIMOS
+            and not self._aviso_largo
+        ):
+            self._aviso_largo = True
+            imprimir(
+                "[PUENTE] ⚠ El dictado pasa de "
+                f"{puente_dictado.SEGUNDOS_MAXIMOS} s: se envía solo hasta ahí."
+            )
+
+    def _lanzar_transcripcion_puente(self):
+        """Manda lo acumulado al puente en una hebra (no bloquea el bucle)."""
+        pcm = bytes(self._pcm_puente)
+        self._pcm_puente = bytearray()
+        self._aviso_largo = False
+        if self._puente_ocupado:
+            imprimir("[PUENTE] Ya hay un dictado en curso; este se descarta.")
+            return
+        if not pcm:
+            imprimir("[PUENTE] No hay audio que enviar.")
+            return
+        self._puente_ocupado = True
+        segundos = len(pcm) / (puente_dictado.FRECUENCIA * 2)
+        imprimir(f"[PUENTE] Enviando {segundos:.1f} s de audio por HTTPS...")
+        threading.Thread(
+            target=self._transcribir_puente, args=(pcm,), daemon=True
+        ).start()
+
+    def _transcribir_puente(self, pcm):
+        """Hebra: POST al puente y el resultado a la cola de eventos."""
+        try:
+            texto, error = puente_dictado.transcribir(self._config_cuenta, pcm)
+        except Exception as e:  # nunca puede tumbar la hebra
+            texto, error = "", f"fallo al dictar por el puente: {e}"
+        self._puente_ocupado = False
+        self._cola_eventos.put(("puente_texto", texto, error))
+
     def _enviar_audio(self):
         """Envía chunks de audio acumulados al servidor."""
         enviados = 0
         while enviados < 20:  # Máximo 20 chunks por iteración (~1.3 s de audio)
             try:
                 chunk = self._cola_audio.get_nowait()
-                if self._dictado_voz and not self._dictado_enviado:
+                if self._transporte == "puente":
+                    # Al puente se le manda el audio del dictado al cerrar; el
+                    # resto del tiempo solo se usa para la palabra clave.
+                    if self._dictado_voz and not self._dictado_enviado:
+                        self._buffer_voz.append(chunk)
+                    elif self._grabando:
+                        self._acumular_puente(chunk)
+                elif self._dictado_voz and not self._dictado_enviado:
                     # Fase de decisión: se guarda en memoria para no mandar al
                     # servidor el audio de una orden que se ejecutará aquí.
                     self._buffer_voz.append(chunk)
                 else:
-                    self._socket.send_multipart(crear_audio(chunk))
+                    self._enviar(crear_audio(chunk))
                 self._alimentar_escucha(chunk)
                 enviados += 1
             except queue.Empty:
@@ -1438,13 +1710,30 @@ class ClienteVoz:
         while True:
             try:
                 evento = self._cola_eventos.get_nowait()
-                if evento == "start":
-                    if self._dictado_voz:
+                if evento == "indicador_on":
+                    # Lo pidió el gancho de teclado: Tkinter se toca aquí, en el
+                    # bucle principal, nunca dentro del callback (2026-11-19).
+                    try:
+                        _mostrar_indicador()
+                    except Exception as e:
+                        imprimir(f"[INDICADOR] No se pudo mostrar: {e}")
+                elif evento == "indicador_off":
+                    try:
+                        _ocultar_indicador()
+                    except Exception as e:
+                        imprimir(f"[INDICADOR] No se pudo ocultar: {e}")
+                elif evento == "start":
+                    if self._transporte == "puente":
+                        # Se acumula el audio y se manda al cerrar.
+                        self._pcm_puente = bytearray()
+                        self._aviso_largo = False
+                        imprimir("[CLIENTE] Dictado por HTTPS (puente).")
+                    elif self._dictado_voz:
                         # La palabra clave la oyó el motor local: no viaja en
                         # el audio, así que se pide el texto marcado. Sin `fin`:
                         # la frase de cierre la quita el propio cliente.
                         imprimir("[CLIENTE] Enviando DICTADO_START de voz al servidor...")
-                        self._socket.send_multipart(crear_dictado_start_voz(fin=False))
+                        self._enviar(crear_dictado_start_voz(fin=False))
                         # Lo guardado mientras se decidía si era orden o texto.
                         # Va DESPUÉS del START: antes, el servidor lo tiraría.
                         if self._buffer_voz:
@@ -1453,22 +1742,46 @@ class ClienteVoz:
                                 "trozos guardados."
                             )
                             for trozo in self._buffer_voz:
-                                self._socket.send_multipart(crear_audio(trozo))
+                                self._enviar(crear_audio(trozo))
                             self._buffer_voz = []
                         # A partir de aquí el audio va directo al socket.
                         self._dictado_enviado = True
                     elif self._escribir_este_dictado:
                         # Dictado en vivo: el servidor manda el texto por frases
                         imprimir("[CLIENTE] Enviando DICTADO_START en vivo al servidor...")
-                        self._socket.send_multipart(crear_dictado_start_vivo())
+                        self._enviar(crear_dictado_start_vivo())
                     else:
                         imprimir("[CLIENTE] Enviando DICTADO_START al servidor...")
-                        self._socket.send_multipart(crear_dictado_start())
+                        self._enviar(crear_dictado_start())
                 elif evento == "stop":
-                    imprimir("[CLIENTE] Enviando DICTADO_STOP al servidor. Esperando transcripción...")
-                    self._socket.send_multipart(crear_dictado_stop())
-                    self._esperando_transcripcion = True
-                    self._transcripcion_inicio = time.time()
+                    if self._transporte == "puente":
+                        self._lanzar_transcripcion_puente()
+                    else:
+                        imprimir("[CLIENTE] Enviando DICTADO_STOP al servidor. Esperando transcripción...")
+                        if self._enviar(crear_dictado_stop()):
+                            self._esperando_transcripcion = True
+                            self._transcripcion_inicio = time.time()
+                elif isinstance(evento, tuple) and evento[:1] == ("puente_texto",):
+                    # Resultado de la hebra que habló con el puente.
+                    _, texto, error = evento
+                    self._esperando_transcripcion = False
+                    if error:
+                        imprimir(f"[PUENTE] {error}")
+                        esperando = self._esperando
+                        self._esperando = None
+                        reproducir_sonido("error")
+                        if esperando not in ("orden", "consulta"):
+                            _avisar_usuario("Dictado por HTTPS", error)
+                    else:
+                        imprimir(f"Texto detectado: {texto}")
+                        if self._esperando == "orden":
+                            self._esperando = None
+                            self._orden_corregida(texto)
+                        elif self._esperando == "consulta":
+                            self._esperando = None
+                            self._responder_consulta(texto)
+                        else:
+                            self._entregar_texto(texto)
             except queue.Empty:
                 break
 
@@ -1582,7 +1895,8 @@ class ClienteVoz:
 
     def detener(self):
         """Cierra el cliente (menú del icono)."""
-        imprimir("[CLIENTE] Cierre pedido desde el icono.")
+        imprimir("[CLIENTE] Cerrando (Salir del icono).")
+        self._cierre_pedido = True
         self._activo = False
 
     def _encender_escucha_local(self):
@@ -2395,36 +2709,220 @@ def _probar_bandeja(segundos=30.0):
     )
 
 
+def _avisar_instalacion(titulo, texto):
+    """Aviso de instalación: cuadro de diálogo, salvo con `--silencioso`.
+
+    El instalador de Inno Setup llama a `ClienteVoz.exe --instalar
+    --silencioso` y `--desinstalar --silencioso`: así no aparece un diálogo
+    modal que detenga la instalación (y no la rompe si va desatendida).
+    """
+    if "--silencioso" in sys.argv:
+        imprimir(f"{titulo}: {texto.replace(chr(10), ' ')}")
+        return
+    _mensaje_windows(titulo, texto)
+
+
+def _ruta_inicio_usuario():
+    """Carpeta «Inicio» del usuario (arranque al iniciar sesión, sin admin)."""
+    return os.path.join(
+        os.environ.get("APPDATA", ""),
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+        "Startup",
+    )
+
+
+def _crear_acceso_inicio():
+    """Deja un acceso directo en la carpeta Inicio y devuelve su ruta.
+
+    Se usa esto en vez de `schtasks`: crear una tarea con disparador ONLOGON
+    devuelve «acceso denegado» cuando el proceso no es elevado, y el instalador
+    corre **sin administrador** a propósito. La carpeta Inicio del usuario
+    siempre es escribible (2026-11-19).
+    """
+    if not getattr(sys, "frozen", False):
+        # En modo fuente no se toca el arranque del sistema.
+        return ""
+    ejecutable = sys.executable
+    carpeta = _ruta_inicio_usuario()
+    destino = os.path.join(carpeta, "SkipKey.lnk")
+    if not os.environ.get("APPDATA"):
+        return ""
+    orden = (
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('"
+        + destino.replace("'", "''")
+        + "');$s.TargetPath='"
+        + ejecutable.replace("'", "''")
+        + "';$s.WorkingDirectory='"
+        + os.path.dirname(ejecutable).replace("'", "''")
+        + "';$s.Save()"
+    )
+    try:
+        os.makedirs(carpeta, exist_ok=True)
+        resultado = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", orden],
+            capture_output=True,
+            text=True,
+        )
+        if resultado.returncode == 0 and os.path.exists(destino):
+            imprimir(f"[ARRANQUE] Acceso de Inicio creado: {destino}")
+            return destino
+        imprimir(
+            "[ARRANQUE] No se pudo crear el acceso de Inicio: "
+            f"{resultado.stderr.strip() or resultado.stdout.strip()}"
+        )
+    except Exception as e:
+        imprimir(f"[ARRANQUE] No se pudo crear el acceso de Inicio: {e}")
+    return ""
+
+
 def _instalar_autostart():
     _asegurar_config()
-    nombre_tarea = "ClienteVoz"
-    resultado = subprocess.run(
-        ["schtasks", "/Create", "/TN", nombre_tarea, "/TR", _comando_autostart(),
-         "/SC", "ONLOGON", "/F"],
-        capture_output=True, text=True,
+    # Limpia la tarea de instalaciones anteriores: era la que fallaba sin
+    # elevación y la que hacía que el cliente no arrancara con Windows.
+    subprocess.run(
+        ["schtasks", "/Delete", "/TN", "ClienteVoz", "/F"],
+        capture_output=True,
+        text=True,
     )
-    if resultado.returncode == 0:
-        _mensaje_windows(
+    acceso = _crear_acceso_inicio()
+    if acceso:
+        _avisar_instalacion(
             "ClienteVoz",
             "Cliente de dictado instalado correctamente.\n\n"
-            "Se iniciará automáticamente al iniciar sesión.\n"
+            "Arrancará al iniciar sesión (acceso directo en la carpeta Inicio).\n"
             f"Servidor: {_servidor_por_defecto()}\n\n"
             "Para desinstalar: ClienteVoz.exe --desinstalar",
         )
     else:
-        _mensaje_windows("ClienteVoz", "Error al instalar:\n" + resultado.stderr)
+        _avisar_instalacion(
+            "ClienteVoz",
+            "Instalado, pero NO se pudo dejar el arranque automático.\n\n"
+            "Crea a mano un acceso directo a este programa en Win+R → shell:startup.",
+        )
 
 
 def _desinstalar_autostart():
-    nombre_tarea = "ClienteVoz"
+    ruta = os.path.join(_ruta_inicio_usuario(), "SkipKey.lnk")
+    quitado = False
+    try:
+        if os.path.exists(ruta):
+            os.remove(ruta)
+            quitado = True
+            imprimir(f"[ARRANQUE] Acceso de Inicio borrado: {ruta}")
+    except OSError as e:
+        imprimir(f"[ARRANQUE] No se pudo borrar {ruta}: {e}")
     resultado = subprocess.run(
-        ["schtasks", "/Delete", "/TN", nombre_tarea, "/F"],
-        capture_output=True, text=True,
+        ["schtasks", "/Delete", "/TN", "ClienteVoz", "/F"],
+        capture_output=True,
+        text=True,
     )
-    if resultado.returncode == 0:
-        _mensaje_windows("ClienteVoz", "Autostart eliminado correctamente.")
+    if quitado or resultado.returncode == 0:
+        _avisar_instalacion("ClienteVoz", "Arranque automático desinstalado.")
     else:
-        _mensaje_windows("ClienteVoz", "No se pudo eliminar:\n" + resultado.stderr)
+        _avisar_instalacion(
+            "ClienteVoz",
+            "No se encontró el arranque automático (no había nada que quitar).",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Robustez del arranque (2026-11-19)
+# ---------------------------------------------------------------------------
+
+_CERROJO_INSTANCIA = None
+
+
+def _registrar_excepcion(tipo, valor, traza):
+    """Escribe en el registro las excepciones que nadie atrapa.
+
+    `ClienteVoz.exe` se compila sin consola (`console=False`): sin esto, un
+    fallo mata el proceso y no deja ni una línea en el log, que es lo que hacía
+    imposible saber por qué «dejaba de funcionar solo» (2026-11-19).
+    """
+    try:
+        texto = "".join(traceback.format_exception(tipo, valor, traza))
+        imprimir("[ERROR NO CONTROLADO] " + texto.replace("\n", " | "))
+    except Exception:
+        pass
+
+
+def _registrar_excepcion_hilo(args):
+    """Lo mismo para las hebras (`threading.excepthook`)."""
+    _registrar_excepcion(args.exc_type, args.exc_value, args.exc_traceback)
+
+
+def _instalar_captura_de_errores():
+    """Apunta los enganches de excepción al registro del cliente."""
+    sys.excepthook = _registrar_excepcion
+    threading.excepthook = _registrar_excepcion_hilo
+
+
+def _instancia_unica_disponible():
+    """¿Se puede arrancar? Deja un cerrojo para que no corran dos clientes.
+
+    Dos copias (la de la tarea programada y otra abierta a mano) se pelean por
+    el micrófono y por el icono de la bandeja, y una de las dos acaba cayéndose
+    (visto el 2026-11-19). En Windows se usa un mutex con nombre; fuera de
+    Windows no hace falta (systemd ya garantiza una sola instancia).
+    """
+    global _CERROJO_INSTANCIA
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        _CERROJO_INSTANCIA = kernel32.CreateMutexW(None, False, "SkipKeyClienteVoz")
+        ERROR_ALREADY_EXISTS = 183
+        if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(ctypes.c_void_p(_CERROJO_INSTANCIA))
+            _CERROJO_INSTANCIA = None
+            return False
+        return True
+    except Exception as e:  # si falla la comprobación, se arranca igual
+        imprimir(f"[CLIENTE] No se pudo comprobar la instancia única: {e}")
+        return True
+
+
+def _bucle_cliente(direccion):
+    """Arranca el cliente y lo relanza si muere por un fallo.
+
+    Un `.exe` sin consola que se cae deja la PC muda sin avisar. Mientras el
+    cierre no se pida desde el icono, se vuelve a arrancar con espera
+    creciente; solo se rinde si cae 5 veces seguidas en menos de 30 s, para no
+    entrar en un bucle de reinicios.
+    """
+    rapidos = 0
+    while True:
+        cliente = ClienteVoz(direccion)
+        inicio = time.time()
+        cliente.ejecutar()
+        if cliente._cierre_pedido:
+            imprimir("[CLIENTE] Cierre pedido: no se relanza.")
+            return
+        duracion = time.time() - inicio
+        rapidos = rapidos + 1 if duracion < 30 else 0
+        if rapidos >= 5:
+            imprimir(
+                f"[CLIENTE] ⚠ El cliente cayó {rapidos} veces seguidas en menos "
+                "de 30 s; no se relanza. Revisa el registro."
+            )
+            _avisar_usuario(
+                "SkipKey se detuvo",
+                "El cliente se cerró varias veces seguidas. Revisa el registro "
+                "(icono de la bandeja → Ver registro) y vuelve a abrirlo.",
+            )
+            return
+        espera = min(10 * max(rapidos, 1), 60)
+        imprimir(
+            "[CLIENTE] ⚠ El cliente se detuvo por un fallo. Se relanza en "
+            f"{espera} s (intento {rapidos + 1}/5)."
+        )
+        time.sleep(espera)
 
 
 # ---------------------------------------------------------------------------
@@ -2432,10 +2930,39 @@ def _desinstalar_autostart():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    rotar_logs_al_iniciar()
-    imprimir("=== CLIENTE DE SKIPKEY ===")
+    _instalar_captura_de_errores()
 
     args = sys.argv[1:]
+
+    # ⚠️ La rotación VACÍA el registro. Solo se hace cuando de verdad arranca
+    # el cliente: la ventana de configuración y las pruebas se lanzan como un
+    # proceso más del propio `.exe`, y antes trituraban el registro del cliente
+    # que estaba corriendo (2026-11-19). Por eso el registro «perdía» líneas.
+    _MODOS_AYUDA = (
+        "--instalar",
+        "--desinstalar",
+        "--probar-microfono",
+        "--probar-escucha",
+        "--probar-bandeja",
+        "--configuracion",
+    )
+    if not any(modo in args for modo in _MODOS_AYUDA):
+        # El cerrojo va ANTES de rotar: una segunda copia no debe vaciar el
+        # registro del cliente que ya está corriendo.
+        if not _instancia_unica_disponible():
+            imprimir(
+                "[CLIENTE] Ya hay otra copia del cliente en marcha; esta se "
+                "cierra sin tocar el registro."
+            )
+            _mensaje_windows(
+                "SkipKey",
+                "El cliente ya está en ejecución.\n\n"
+                "Para cerrarlo: icono del área de notificación → botón derecho → "
+                "Salir.",
+            )
+            sys.exit(0)
+        rotar_logs_al_iniciar()
+    imprimir(f"=== CLIENTE DE SKIPKEY === ({' '.join(args) or 'sin argumentos'})")
 
     # Modos de instalación del cliente dedicado (Windows)
     if "--instalar" in args:
@@ -2489,6 +3016,14 @@ if __name__ == "__main__":
         ventana_configuracion.main()
         sys.exit(0)
 
+    # Ventana flotante «REC». Va en su propio proceso, igual que la
+    # configuración: el cliente **no** crea Tkinter dentro de sí mismo
+    # (2026-11-19).
+    if "--indicador" in args:
+        import indicador_grabacion
+
+        sys.exit(indicador_grabacion.main())
+
     _asegurar_config()
 
     direccion = None
@@ -2500,5 +3035,4 @@ if __name__ == "__main__":
     if direccion is None:
         direccion = f"tcp://{_servidor_por_defecto()}"
 
-    cliente = ClienteVoz(direccion)
-    cliente.ejecutar()
+    _bucle_cliente(direccion)

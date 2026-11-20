@@ -50,10 +50,10 @@ PLANES = {
         # Pro no tiene tope diario: se dicta y se traduce lo que se quiera.
         # Lo que sigue limitando el abuso no es el cupo, sino la cola del
         # puente (una transcripción y una traducción a la vez), los 60 s por
-        # petición y los 3 dispositivos.
+        # petición y los 5 dispositivos.
         "minutos_dia": None,
         "traducciones_dia": None,
-        "dispositivos": 3,
+        "dispositivos": 5,
     },
 }
 
@@ -174,12 +174,21 @@ def cupos(usuario, uso_hoy=None):
 
 
 def minutos_restantes(usuario, uso_hoy):
-    """Minutos de dictado por servidor que quedan hoy (None = ilimitado)."""
+    """Minutos de dictado por servidor que quedan hoy (None = ilimitado).
+
+    ⚠️ Pro tiene `minutos_dia = None` (sin tope diario, 2026-11-18): restar a
+    ciegas reventaba con «unsupported operand type(s) for -: 'NoneType' and
+    'float'» y el puente devolvía 500 en cada dictado de una cuenta Pro
+    (2026-11-19).
+    """
     if es_maestro(usuario):
         return None
     plan = normalizar(usuario.get("plan") if usuario else None)
+    tope = PLANES[plan]["minutos_dia"]
+    if tope is None:
+        return None
     usados = float(uso_hoy.get("segundos") or 0) / 60.0
-    return max(0.0, PLANES[plan]["minutos_dia"] - usados)
+    return max(0.0, tope - usados)
 
 
 def traducciones_restantes(usuario, uso_hoy):
@@ -187,8 +196,11 @@ def traducciones_restantes(usuario, uso_hoy):
     if es_maestro(usuario):
         return None
     plan = normalizar(usuario.get("plan") if usuario else None)
+    tope = PLANES[plan]["traducciones_dia"]
+    if tope is None:
+        return None
     hechas = int(uso_hoy.get("traducciones") or 0)
-    return max(0, PLANES[plan]["traducciones_dia"] - hechas)
+    return max(0, tope - hechas)
 
 
 def limite_dispositivos(usuario):

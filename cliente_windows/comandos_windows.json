@@ -1,5 +1,6 @@
 {
   "servidor": "192.168.1.2:5555",
+  "transporte": "auto",
   "tecla_activadora": [
     "media_play_pause",
     "ctrl+space"
@@ -10,7 +11,7 @@
   "modo_salida": "portapapeles",
   "modo_activacion": "toggle",
   "modo_escucha": true,
-  "puente": "",
+  "puente": "https://dictado.hlquantlabs.trade",
   "puente_clave": "",
   "escucha_local": false,
   "clave": "computadora",

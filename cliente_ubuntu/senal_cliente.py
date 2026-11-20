@@ -35,6 +35,10 @@ SERVICIOS = (SERVICIO, "skipkey")
 SENAL_ESCUCHA = (signal.SIGRTMIN + 1) if hasattr(signal, "SIGRTMIN") else None
 SENAL_COMANDOS = (signal.SIGRTMIN + 2) if hasattr(signal, "SIGRTMIN") else None
 SENAL_RECARGAR = (signal.SIGRTMIN + 3) if hasattr(signal, "SIGRTMIN") else None
+# Vuelve a enganchar el teclado global. Existe porque un gancho de bajo nivel
+# puede quedarse sin entregar teclas y sin esto no habría forma de recuperarlo
+# sin reiniciar el cliente (2026-11-19).
+SENAL_TECLADO = (signal.SIGRTMIN + 4) if hasattr(signal, "SIGRTMIN") else None
 
 
 def obtener_ruta_pid():
@@ -74,7 +78,8 @@ def _es_el_cliente(linea):
     if not paso:
         return False
     return not any(
-        bandera in linea for bandera in ("--bandeja", "--mpris", "--ventana")
+        bandera in linea
+        for bandera in ("--bandeja", "--mpris", "--ventana", "--indicador")
     )
 
 
@@ -197,3 +202,8 @@ def enviar_comandos():
 def enviar_recargar():
     """Pide al cliente que relea comandos.json (lo hace la ventana al guardar)."""
     return enviar_senal(SENAL_RECARGAR)
+
+
+def enviar_teclado():
+    """Vuelve a levantar el gancho de teclado (menú del icono)."""
+    return enviar_senal(SENAL_TECLADO)

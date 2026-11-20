@@ -46,6 +46,12 @@ FIN_DICTADO = b"FIN_DICTADO"
 PING = b"PING"
 PONG = b"PONG"
 ESTADO = b"ESTADO"
+# Autenticación con el servidor (2026-11-19): al conectar se manda AUTH con el
+# token de la cuenta; el servidor responde AUTH_OK o AUTH_FAIL. Sin sesión no
+# hay token que mandar y, si el servidor lo exige, no dicta.
+AUTH = b"AUTH"
+AUTH_OK = b"AUTH_OK"
+AUTH_FAIL = b"AUTH_FAIL"
 
 
 def crear_audio(chunk):
@@ -91,6 +97,16 @@ def crear_dictado_stop():
 
 def crear_ping():
     return [PING, b""]
+
+
+def crear_auth(token):
+    """Saludo de autenticación: [AUTH, token de la cuenta].
+
+    El token es el mismo de `sesion.json` (el que da `/api/v1/login`). El
+    servidor lo valida contra el puente, así que el dictado queda atado a una
+    cuenta viva.
+    """
+    return [AUTH, token.encode("utf-8")]
 
 
 def crear_texto(texto):

@@ -568,18 +568,65 @@ def dispositivos(usuario_id):
     return [fila["dispositivo"] for fila in filas]
 
 
-def crear_token(usuario_id, dispositivo="", limite=None):
-    """Devuelve un token nuevo en claro (en la base solo queda su hash)."""
-    nombres = dispositivos(usuario_id)
-    etiqueta = (dispositivo or "").strip()[:60] or "dispositivo"
-    if limite is not None and len(nombres) >= limite and etiqueta not in nombres:
-        raise ErrorUsuario(
-            f"Tu plan permite {limite} dispositivo(s). Cierra la sesión en alguno "
-            "o mejora el plan para usar este."
-        )
+def _avisar(texto):
+    """Escribe en el registro del puente, sin atar el módulo a utils_logging."""
+    try:
+        from utils_logging import imprimir
 
-    token = secrets.token_urlsafe(32)
+        imprimir(texto)
+    except Exception:
+        pass
+
+
+def crear_token(usuario_id, dispositivo="", limite=None):
+    """Devuelve un token nuevo en claro (en la base solo queda su hash).
+
+    Reglas (2026-11-19, después de que una cuenta Pro se quedara sin cupos):
+
+    - **Volver a entrar desde el mismo aparato no gasta cupo**: se revoca el
+      token vivo con esa etiqueta y se emite uno nuevo. Antes cada inicio de
+      sesión insertaba otra fila y con tres logins el plan quedaba «lleno».
+    - El límite cuenta **aparatos distintos**, no inicios de sesión.
+    - Si los cupos están ocupados y entra un aparato nuevo, se libera el que
+      lleva **más tiempo sin usarse** en vez de dejar al usuario fuera: desde
+      el cliente no hay ninguna pantalla para cerrar sesiones ajenas.
+    """
+    etiqueta = (dispositivo or "").strip()[:60] or "dispositivo"
     with closing(conectar()) as conexion, conexion:
+        vivos = conexion.execute(
+            "SELECT id, dispositivo, COALESCE(ultimo_uso, creado) AS visto "
+            "FROM tokens WHERE usuario_id = ? AND revocado = 0 AND expira > ? "
+            "ORDER BY visto",
+            (usuario_id, _texto(ahora())),
+        ).fetchall()
+
+        # 1. Mismo aparato: su token anterior se tira (sesión nueva, mismo cupo).
+        repetidos = [f["id"] for f in vivos if f["dispositivo"] == etiqueta]
+        if repetidos:
+            conexion.executemany(
+                "UPDATE tokens SET revocado = 1 WHERE id = ?",
+                [(identificador,) for identificador in repetidos],
+            )
+        otros = [f for f in vivos if f["id"] not in repetidos]
+        nombres = {f["dispositivo"] for f in otros}
+
+        # 2. Aparato nuevo con los cupos llenos: se libera el más antiguo.
+        if limite is not None and etiqueta not in nombres and len(nombres) >= limite:
+            if not otros:
+                raise ErrorUsuario(
+                    "No hay sitio para un aparato más en tu plan. "
+                    "Mejora el plan para conectar otro."
+                )
+            viejo = otros[0]  # la consulta ya viene ordenada por último uso
+            conexion.execute(
+                "UPDATE tokens SET revocado = 1 WHERE id = ?", (viejo["id"],)
+            )
+            _avisar(
+                f"[CUENTAS] Cupos llenos ({limite}): se liberó el aparato "
+                f"«{viejo['dispositivo']}» para dejar entrar a «{etiqueta}»."
+            )
+
+        token = secrets.token_urlsafe(32)
         conexion.execute(
             "INSERT INTO tokens (usuario_id, huella, dispositivo, creado, expira) "
             "VALUES (?, ?, ?, ?, ?)",

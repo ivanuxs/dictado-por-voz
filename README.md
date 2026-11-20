@@ -128,6 +128,12 @@ python3 -m venv entorno_dictado
 El cliente se compila a un binario: **no se reparte código** ni hace falta Python en la
 máquina destino. Se generan dos formatos desde el mismo binario.
 
+> **Llevarlo a otra PC**: los requisitos del equipo, los paquetes del escritorio y el
+> arranque/atajo están en
+> [`cliente_ubuntu/INSTALAR_EN_OTRA_PC.md`](cliente_ubuntu/INSTALAR_EN_OTRA_PC.md).
+> El propio binario imprime ese manual con `--ayuda`, así que también viaja dentro del
+> paquete.
+
 ### `.deb` (recomendado en Ubuntu 22.04 o superior)
 
 ```bash

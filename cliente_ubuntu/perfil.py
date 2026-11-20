@@ -15,10 +15,14 @@ Tres reglas que no se rompen:
 
 La dirección del puente y la clave del proxy se leen de `comandos.json`
 (`"puente"` y `"puente_clave"`), que es lo que edita la pestaña «Cuenta».
+Como ese JSON se publica, la clave también puede venir de la variable de
+entorno `DICTADO_PUENTE_CLAVE` (ver `clave_proxy`).
 """
 
 import json
+import os
 import platform
+import sys
 import urllib.error
 import urllib.request
 
@@ -48,9 +52,58 @@ def dispositivo():
     return nombre[:60]
 
 
+try:  # módulo generado al compilar (ver empaquetado/); no está en el repositorio
+    from clave_proxy_compilada import CLAVE as _CLAVE_COMPILADA
+except Exception:  # sin módulo (modo fuente): manda el entorno o el JSON
+    _CLAVE_COMPILADA = ""
+
+
+def _clave_del_archivo():
+    """Clave del proxy en `clave_proxy.txt`, junto al programa (si existe).
+
+    Permite cambiar la clave sin recompilar: se reemplaza el archivo y se
+    reinicia el cliente. El archivo no se versiona (`.gitignore`).
+    """
+    try:
+        if getattr(sys, "frozen", False) or "__compiled__" in globals():
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
+        with open(
+            os.path.join(base, "clave_proxy.txt"), encoding="utf-8"
+        ) as archivo:
+            return archivo.readline().strip()
+    except OSError:
+        return ""
+
+
+def clave_proxy(config):
+    """Clave del proxy (`X-Clave-Cliente`) que exige nginx.
+
+    Orden de resolución:
+
+    1. `DICTADO_PUENTE_CLAVE` del entorno (para probar o rotar sin recompilar).
+    2. La clave **incrustada al compilar** (`clave_proxy_compilada`), igual que
+       en el APK: el usuario final no tiene que saber que existe.
+    3. `clave_proxy.txt` junto al programa, para cambiar la clave sin recompilar.
+    4. `puente_clave` del JSON: solo si alguien la escribió a mano en la ventana.
+
+    El JSON del repositorio es público, así que nunca lleva la clave.
+    """
+    del_entorno = (os.environ.get("DICTADO_PUENTE_CLAVE") or "").strip()
+    if del_entorno:
+        return del_entorno
+    if _CLAVE_COMPILADA:
+        return str(_CLAVE_COMPILADA).strip()
+    del_archivo = _clave_del_archivo()
+    if del_archivo:
+        return del_archivo
+    return str((config or {}).get("puente_clave") or "").strip()
+
+
 def _cabeceras(config, con_token=True):
     cabeceras = {"Content-Type": "application/json"}
-    clave = str((config or {}).get("puente_clave") or "").strip()
+    clave = clave_proxy(config)
     if clave:
         cabeceras["X-Clave-Cliente"] = clave
     token = sesion.token()
@@ -82,6 +135,12 @@ def _pedir(config, metodo, ruta, cuerpo=None, con_token=True, espera=20):
             texto = respuesta.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         texto = e.read().decode("utf-8", "replace")
+        if e.code == 403 and not clave_proxy(config):
+            raise ErrorPerfil(
+                "El servidor rechazó la conexión (403): a este cliente le "
+                "falta la clave del proxy. No es tu cuenta: avisa a quien "
+                "instaló el cliente."
+            ) from e
         motivo = ""
         try:
             fallo = json.loads(texto)
