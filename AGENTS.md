@@ -271,6 +271,16 @@ cliente. Eso se cerró en dos frentes:
   poner `DICTADO_TOKEN` en el servidor y `DICTADO_ZMQ_TOKEN` en el puente → activar
   `DICTADO_EXIGIR_CUENTA=1`. El audio de un cliente sin cuenta se rechaza **una vez** por
   conexión (`estado.avisado_auth`), no en cada trozo de 64 ms.
+- ⚠️ **El puente repite el `AUTH` en cada dictado** (`_Sesion.abrir`), antes del
+  `DICTADO_START`. ZeroMQ reconecta por debajo **sin avisar a la aplicación**, así que tras
+  reiniciar el servidor el puente seguía con un socket "conectado" pero sin autenticar: el
+  servidor descartaba su audio y cada dictado moría esperando el texto (2026-11-19, con
+  `DICTADO_EXIGIR_CUENTA=1`). Además, al vencer la espera del texto se cierra la conexión para
+  que el siguiente dictado reconecte y salude.
+- **Estado actual (2026-11-19): cerrado.** `DICTADO_TOKEN` y `DICTADO_EXIGIR_CUENTA=1` viven en
+  `/etc/skipkey/servidor.env` (permisos 600, cargado con `EnvironmentFile=` **dentro** de
+  `[Service]`); el puente tiene el mismo valor en `DICTADO_ZMQ_TOKEN`. Comprobado: un DEALER
+  anónimo recibe `AUTH_FAIL → Autenticación requerida`, y el puente transcribe por HTTPS.
 
 ### Transporte del audio en el escritorio: puente HTTPS (2026-11-19)
 

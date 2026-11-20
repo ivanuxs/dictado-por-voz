@@ -63,6 +63,16 @@ class SesionDictado:
         """Toma el turno, conecta si hace falta y pide empezar a acumular."""
         await self._cliente.entrar()
         self._socket = self._cliente.socket()
+        # El servidor puede haberse reiniciado (o haber empezado a exigir cuenta)
+        # desde la última conexión: ZeroMQ reconecta por debajo sin avisar a la
+        # aplicación, así que el saludo de antes no sirve. Se repite en **cada**
+        # dictado, antes del DICTADO_START y por el mismo socket, de modo que el
+        # servidor lo procesa primero y el audio ya llega autenticado
+        # (2026-11-19: el puente quedó sin autenticar tras reiniciar el servidor
+        # y cada dictado moría esperando el texto).
+        if getattr(self._cliente, "token", ""):
+            with contextlib.suppress(Exception):
+                await self._socket.send_multipart(crear_auth(self._cliente.token))
         # Banderas separadas por comas. El modelo de los parciales va en el
         # propio arranque (`vivo:medium`). `voz` pide que el TEXTO vuelva con
         # marcas: quien oyó la palabra clave fue el cliente (su escucha local o
@@ -106,6 +116,9 @@ class SesionDictado:
                 asyncio.shield(self._futuro), self._timeout
             )
         except asyncio.TimeoutError:
+            # Si el servidor se reinició, este socket ya no está autenticado: se
+            # cierra para que el próximo dictado reconecte y vuelva a saludar.
+            self._cliente.cerrar_conexion()
             raise ServidorSinRespuesta(
                 "El servidor de dictado no terminó la transcripción a tiempo."
             ) from None
